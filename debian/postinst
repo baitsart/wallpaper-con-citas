@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    # Opcional: otorgar permisos de lectura y escritura a la carpeta de acciones e íconos
+    chmod -R 777 /usr/share/wallpaper_manager/w_m/ 2>/dev/null || true
+
+    # Actualiza la base de datos de lanzadores (.desktop)
+    update-desktop-database -q /usr/share/applications || true
+
+    # Actualiza la caché de íconos del sistema
+    touch --no-create /usr/share/icons/hicolor 2>/dev/null || true
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+#DEBHELPER#
+exit 0

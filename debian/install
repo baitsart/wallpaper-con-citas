@@ -1,5 +1,5 @@
-wallpaper_con_citas.py usr/share/wallpaper_manager/w_m/actions/
 wallpaper-con-citas usr/bin/
+wallpaper_con_citas.py usr/share/wallpaper_manager/w_m/actions/
 debian/wallpaper_con_citas.desktop usr/share/applications/
 skel/.wallpaper_manager/ etc/skel/
 skel/.config/wallpaper_manager/ etc/skel/.config/

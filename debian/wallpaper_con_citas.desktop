@@ -1,0 +1,13 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Name=Citas & Wallpapers
+Comment=Download images based on your chosen tags, along with quotes from your preferred authors—which you can add to the images—and set them as your wallpaper.
+Exec=env GDK_BACKEND=x11 python3 /usr/share/wallpaper_manager/w_m/actions/wallpaper_con_citas.py
+Name[es_UY]=Citas & Wallpapers
+Terminal=false
+Type=Application
+StartupNotify=true
+Icon=/usr/share/wallpaper_manager/w_m/iconos/icono-wallpaper_con_citas.png
+Categories=GNOME;GTK;Utility;
+Encoding=UTF-8
+NotShowIn=KDE;MATE;XFCE;

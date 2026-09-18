@@ -1,5 +1,5 @@
 wallpaper-con-citas (1.0.1) resolute; urgency=medium
-  * Edited - debian/preinst to actively block installation when wallpaper-manager is detected
+
   * An application for downloading wallpapers from Wallhaven/Picsum and overlaying stylized quotes—in English or Spanish—directly onto the image. Initial release.
 
- -- Rodrigo Esteves <baitsart@gmail.com>  Thu, 17 Sep 2026 21:24:00 -0300
+ -- Rodrigo Esteves <baitsart@gmail.com>  Thu, 18 Sep 2026 09:24:00 -0300

@@ -1,3 +1,17 @@
 #!/usr/bin/make -f
+
 %:
 	dh $@
+
+override_dh_install:
+	dh_install
+	# Crear directorios de destino
+	install -d debian/wallpaper-con-citas/usr/share/wallpaper_manager/w_m/iconos/
+	install -d debian/wallpaper-con-citas/usr/share/pixmaps/
+	
+	# Copiar los íconos a la ruta de la app
+	install -m 644 icono-wallpaper_con_citas.png debian/wallpaper-con-citas/usr/share/wallpaper_manager/w_m/iconos/
+	install -m 644 wallpaper-manager.png debian/wallpaper-con-citas/usr/share/wallpaper_manager/w_m/iconos/
+	
+	# Copiar también el ícono principal a pixmaps para GNOME Dock
+	install -m 644 icono-wallpaper_con_citas.png debian/wallpaper-con-citas/usr/share/pixmaps/icono-wallpaper_con_citas.png

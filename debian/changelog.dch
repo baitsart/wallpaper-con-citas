@@ -1,0 +1,14 @@
+wallpaper-con-citas (1.0.2ubuntu1) UNRELEASED; urgency=medium
+
+  * 
+
+ -- Rodrigo Esteves <baitsart@gmail.com>  Fri, 18 Sep 2026 00:44:05 -0300
+
+wallpaper-con-citas (1.0.2) resolute; urgency=medium
+
+  * Añadido archivo .desktop e ícono del sistema.
+
+  * Edited - debian/preinst to actively block installation when wallpaper-manager is detected
+  * An application for downloading wallpapers from Wallhaven/Picsum and overlaying stylized quotes—in English or Spanish—directly onto the image. Initial release.
+
+ -- Rodrigo Esteves <baitsart@gmail.com>  Thu, 17 Sep 2026 21:24:00 -0300

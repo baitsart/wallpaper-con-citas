@@ -32,6 +32,9 @@ sudo apt update
 sudo apt install wallpaper-con-citas
 ```
 
+
+---
+
 <a name="english"></a>
 ## English
 
@@ -44,6 +47,7 @@ As well has a list of tags for searching images according to the user's preferen
 The application manages downloads from external platforms like **Wallhaven** and **Picsum**, applying clean typography rendering over the image before updating your desktop wallpaper.
 
 ### Key Features
+
 * **Native GTK3 Interface:** Seamless integration with GNOME, XFCE, and MATE desktop environments.
 * **Custom Quote Collection:** Includes configurable quotes sorted by author and topic.
 * **Image Search by Tags:** Choose the tags used to search for wallpapers.

@@ -37,6 +37,7 @@ QUOTES_DIR = IMAGENES_QUOTES_DIR / "Quotes"
 TEMP_DIR = Path(tempfile.gettempdir()) / "wallpaper_manager_cache"
 CONFIG_FILE = HOME_DIR / ".config" / "wallpaper_manager" / "auto-download.config"
 CONFIG_TAGS_PATH = HOME_DIR / ".config" / "wallpaper_manager" / "tags_activos.config"
+CONFIG_LANG_FILE = HOME_DIR / ".config" / "wallpaper_manager" / "language.config"
 
 # 3. Creación de carpetas si no existen
 IMAGENES_QUOTES_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,6 +45,23 @@ QUOTES_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+
+def cargar_config_idioma():
+    if CONFIG_LANG_FILE.exists():
+        try:
+            val = CONFIG_LANG_FILE.read_text().strip().lower()
+            if val in ["en", "es"]:
+                return val
+        except Exception:
+            pass
+    return "es"
+
+def guardar_config_idioma(lang):
+    try:
+        CONFIG_LANG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_LANG_FILE.write_text(lang, encoding="utf-8")
+    except Exception as e:
+        print(f"Error guardando idioma: {e}")
 
 def cargar_tags_activos():
     """
@@ -537,21 +555,27 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
             "Las enseñanzas del Dr Siva.txt",
             "Dr Siva P s teachings.txt",
         ]
-        citas = obtener_cita_desde_txt(archivos_siva, patron_fallback="siva")
+        # Seleccionar el archivo según el idioma objetivo preferido primero
+        if lang == "en":
+            citas = obtener_cita_desde_txt(["Dr Siva P s teachings.txt"], patron_fallback="siva")
+            if not citas:
+                citas = obtener_cita_desde_txt(["Las enseñanzas del Dr Siva.txt"], patron_fallback="siva")
+        else:
+            citas = obtener_cita_desde_txt(["Las enseñanzas del Dr Siva.txt"], patron_fallback="siva")
+            if not citas:
+                citas = obtener_cita_desde_txt(["Dr Siva P s teachings.txt"], patron_fallback="siva")
+
         cita_sel = (
             random.choice(citas)
             if citas
             else "El perdón es la llave que abre todas las puertas de la sanación."
         )
 
+        # Si el texto obtenido necesita traducción
         if lang == "en":
-            cita_sel = traducir_texto(
-                cita_sel, target_lang="en", source_lang="es"
-            )
+            cita_sel = traducir_texto(cita_sel, target_lang="en", source_lang="auto")
         elif lang == "es":
-            cita_sel = traducir_texto(
-                cita_sel, target_lang="es", source_lang="en"
-            )
+            cita_sel = traducir_texto(cita_sel, target_lang="es", source_lang="auto")
 
         return {
             "Cita": cita_sel,
@@ -561,27 +585,27 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
         }
 
     elif autor_id == "ravi_shankar":
-        archivos_ravi = [
-            "Citas de Sri Sri Ravi Shankar.txt",
-            "Sri Sri Ravi Shankar quotes.txt",
-        ]
-        citas = obtener_cita_desde_txt(
-            archivos_ravi, patron_fallback="ravi shankar"
-        )
+        # Priorizar el archivo correspondiente al idioma seleccionado
+        if lang == "en":
+            citas = obtener_cita_desde_txt(["Sri Sri Ravi Shankar quotes.txt"], patron_fallback="ravi shankar")
+            if not citas:
+                citas = obtener_cita_desde_txt(["Citas de Sri Sri Ravi Shankar.txt"], patron_fallback="ravi shankar")
+        else:
+            citas = obtener_cita_desde_txt(["Citas de Sri Sri Ravi Shankar.txt"], patron_fallback="ravi shankar")
+            if not citas:
+                citas = obtener_cita_desde_txt(["Sri Sri Ravi Shankar quotes.txt"], patron_fallback="ravi shankar")
+
         cita_sel = (
             random.choice(citas)
             if citas
             else "La sonrisa es la verdadera riqueza del alma."
         )
 
+        # Traducir según corresponda permitiendo auto-detección del origen
         if lang == "en":
-            cita_sel = traducir_texto(
-                cita_sel, target_lang="en", source_lang="es"
-            )
+            cita_sel = traducir_texto(cita_sel, target_lang="en", source_lang="auto")
         elif lang == "es":
-            cita_sel = traducir_texto(
-                cita_sel, target_lang="es", source_lang="en"
-            )
+            cita_sel = traducir_texto(cita_sel, target_lang="es", source_lang="auto")
 
         return {
             "Cita": cita_sel,
@@ -1232,7 +1256,7 @@ class WallpaperManagerWindow(Gtk.Window):
         self.citas_activas = True
         self.autor_seleccionado = "prem_rawat"
         self.autor_otro_seleccionado = ""
-        self.idioma_actual = "es"
+        self.idioma_actual = cargar_config_idioma()
         self.imagenes_cache = []
         self.imagenes_limpias_abiertas = set()
 
@@ -1279,52 +1303,13 @@ class WallpaperManagerWindow(Gtk.Window):
 
     def crear_panel_superior(self):
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
-
-        # ==========================================
-        # BOTÓN DE APP INDICATOR (Arriba a la derecha - 25% más pequeño)
-        # ==========================================
-        btn_indicator = Gtk.Button()
-        btn_indicator.set_relief(Gtk.ReliefStyle.NONE)
         
-        icono_path = "/usr/share/wallpaper_manager/w_m/iconos/wallpaper-manager.png"
-        if os.path.exists(icono_path):
-            # Reducido un 25% (de 24x24 a 18x18)
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(icono_path, 18, 18, True)
-            img_icono = Gtk.Image.new_from_pixbuf(pixbuf)
-        else:
-            img_icono = Gtk.Image.new_from_icon_name("applications-system", Gtk.IconSize.BUTTON)
-            
-        btn_indicator.add(img_icono)
-        btn_indicator.set_tooltip_text("Wallpaper Manager App Indicator")
-        
+        # Inicializar o limpiar el diccionario antes de rellenarlo
+        self.chk_estilos = {}
 
-
-        def al_pulsar_indicator(widget):
-            try:
-                # Comprobamos si ya está corriendo
-                resultado = subprocess.run(["pgrep", "-f", "wm-app-indicador"], capture_output=True, text=True)
-                if resultado.stdout.strip():
-                    print("Wallpaper Manager App Indicator is running"
-)
-                    # Notificación nativa en pantalla
-                    subprocess.run(["notify-send", "Wallpaper Manager", "Wallpaper Manager App Indicator it's running"])
-                    return
-            except Exception as e:
-                print(f"Error al comprobar el proceso: {e}")
-
-            # Si no está abierto, lo lanzamos en segundo plano
-            try:
-                subprocess.Popen(["python3", "/usr/share/wallpaper_manager/w_m/wm-app-indicador"])
-                print("Wallpaper Manager App Indicator iniciado.")
-            except Exception as e:
-                print(f"Error al iniciar el indicator: {e}")
-
-        btn_indicator.connect("clicked", al_pulsar_indicator)
-        
-        # Lo añadimos al panel superior, empujándolo al extremo derecho
-        hbox.pack_end(btn_indicator, False, False, 0)
-        # ==========================================
-
+        # ------------------------------------------------------------------
+        # 1. BLOQUE DE CITAS (Izquierda)
+        # ------------------------------------------------------------------
         exp_citas = Gtk.Expander(label="<b>📜 Citas</b>")
         exp_citas.get_label_widget().set_use_markup(True)
         exp_citas.set_expanded(False)
@@ -1336,8 +1321,16 @@ class WallpaperManagerWindow(Gtk.Window):
         self.chk_citas.set_active(True)
         self.chk_citas.connect("toggled", self.on_citas_toggled)
         box_citas_header.pack_start(self.chk_citas, True, True, 0)
+        
+        # Configuración dinámica del botón según el idioma guardado
+        self.btn_lang = Gtk.ToggleButton()
+        if self.idioma_actual == "en":
+            self.btn_lang.set_label("🇬🇧 >")
+            self.btn_lang.set_active(True)
+        else:
+            self.btn_lang.set_label("🇪🇸 >")
+            self.btn_lang.set_active(False)
 
-        self.btn_lang = Gtk.ToggleButton(label="🇪🇸 >")
         self.btn_lang.connect("toggled", self.on_idioma_toggled)
         box_citas_header.pack_end(self.btn_lang, False, False, 0)
 
@@ -1362,24 +1355,29 @@ class WallpaperManagerWindow(Gtk.Window):
 
         vbox_citas.pack_start(self.vbox_autores, False, False, 0)
         exp_citas.add(vbox_citas)
-        hbox.pack_start(exp_citas, True, True, 0)
+        hbox.pack_start(exp_citas, False, False, 0)
 
+        # ------------------------------------------------------------------
+        # 2. SPACER A LA IZQUIERDA DEL MEDIO (Empuja las citas y los estilos)
+        # ------------------------------------------------------------------
+        spacer1 = Gtk.Box()
+        hbox.pack_start(spacer1, True, True, 0)
+
+        # ------------------------------------------------------------------
+        # 3. BLOQUE DE ESTILOS (Centro / Derecha)
+        # ------------------------------------------------------------------
         exp_estilos = Gtk.Expander(label="<b>🎨 Estilos de imágenes</b>")
         exp_estilos.get_label_widget().set_use_markup(True)
         exp_estilos.set_expanded(False)
 
         grid = Gtk.Grid()
-        grid.set_column_spacing(12); grid.set_row_spacing(4)
+        grid.set_column_spacing(12)
+        grid.set_row_spacing(4)
 
-        self.chk_estilos = {}
         row, col = 0, 0
         for nombre, info in IMAGE_STYLES.items():
             chk = Gtk.CheckButton(label=nombre)
-            
-            # Usamos el estado real que leímos del archivo (True o False)
             chk.set_active(info["activo"]) 
-            
-            # Guardamos el término de búsqueda usando info["query"]
             self.chk_estilos[info["query"]] = chk
             
             grid.attach(chk, col, row, 1, 1)
@@ -1389,8 +1387,47 @@ class WallpaperManagerWindow(Gtk.Window):
                 row += 1
 
         exp_estilos.add(grid)
-        hbox.pack_start(exp_estilos, True, True, 0)
+        hbox.pack_start(exp_estilos, False, False, 0)
+
+        # Spacer secundario opcional si quieres separar estilos del botón derecho
+        spacer2 = Gtk.Box()
+        hbox.pack_start(spacer2, True, True, 0)
+
+        # ------------------------------------------------------------------
+        # 4. BOTÓN APP INDICATOR (Extremo Derecho)
+        # ------------------------------------------------------------------
+        btn_indicator = Gtk.Button()
+        btn_indicator.set_relief(Gtk.ReliefStyle.NONE)
+        
+        icono_path = "/usr/share/wallpaper_manager/w_m/iconos/wallpaper-manager.png"
+        if os.path.exists(icono_path):
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(icono_path, 18, 18, True)
+            img_icono = Gtk.Image.new_from_pixbuf(pixbuf)
+        else:
+            img_icono = Gtk.Image.new_from_icon_name("applications-system", Gtk.IconSize.BUTTON)
+            
+        btn_indicator.add(img_icono)
+        btn_indicator.set_tooltip_text("Wallpaper Manager App Indicator")
+
+        def al_pulsar_indicator(widget):
+            try:
+                resultado = subprocess.run(["pgrep", "-f", "wm-app-indicador"], capture_output=True, text=True)
+                if resultado.stdout.strip():
+                    subprocess.run(["notify-send", "Wallpaper Manager", "Wallpaper Manager App Indicator it's running"])
+                    return
+            except Exception as e:
+                print(f"Error al comprobar el proceso: {e}")
+
+            try:
+                subprocess.Popen(["python3", "/usr/share/wallpaper_manager/w_m/wm-app-indicador"])
+            except Exception as e:
+                print(f"Error al iniciar el indicator: {e}")
+
+        btn_indicator.connect("clicked", al_pulsar_indicator)
+        hbox.pack_end(btn_indicator, False, False, 0)
+
         return hbox
+        
 
     def on_config_preguntar_toggled(self, widget):
         self.preguntar_descargar_al_cerrar = widget.get_active()
@@ -1403,6 +1440,9 @@ class WallpaperManagerWindow(Gtk.Window):
         else:
             self.idioma_actual = "es"
             widget.set_label("🇪🇸 >")
+            
+        # Guardar la selección de idioma inmediatamente
+        guardar_config_idioma(self.idioma_actual)
 
     def on_citas_toggled(self, widget):
         self.citas_activas = widget.get_active()

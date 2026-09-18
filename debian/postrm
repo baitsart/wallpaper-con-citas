@@ -3,13 +3,30 @@ set -e
 
 case "$1" in
     remove|purge)
-        # Limpiar la caché temporal de imágenes descargadas en /tmp
+        # 1. Limpiar la caché temporal en /tmp
         if [ -d "/tmp/wallpaper_manager_cache" ]; then
             rm -rf /tmp/wallpaper_manager_cache
         fi
+
+        # 2. Borrar el lanzador en la carpeta local de TODOS los usuarios en /home/
+        for user_dir in /home/*; do
+            if [ -d "$user_dir" ]; then
+                rm -f "$user_dir/.local/share/applications/wallpaper_con_citas.desktop"
+                rm -f "$user_dir/.local/share/applications/wallpaper_manager.desktop"
+            fi
+        done
+
+        # 3. Notificar a GNOME la eliminación de los accesos directos
+        update-desktop-database -q /usr/share/applications || true
+        
+        # 4. Refrescar la caché gráfica de íconos
+        touch --no-create /usr/share/icons/hicolor 2>/dev/null || true
+        gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
         ;;
+
     upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
         ;;
+
     *)
         echo "postrm llamado con un argumento desconocido \`$1'" >&2
         exit 1

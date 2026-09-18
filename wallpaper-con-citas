@@ -1,2 +1,2 @@
 #!/bin/sh
-exec python3 /usr/share/wallpaper_manager/w_m/actions/wallpaper_con_citas.py "$@"
+GDK_BACKEND=x11 gtk-launch wallpaper_con_citas
