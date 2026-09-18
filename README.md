@@ -4,13 +4,11 @@
 
 ---
 
-<a name="español"></a>
-
 ## Español
 
 **Wallpaper Manager con Citas** es una aplicación gráfica desarrollada en Python y GTK3, diseñada para descargar automáticamente fondos de pantalla de alta calidad e integrar citas textuales inspiradoras sobre las imágenes.
 
-Permite seleccionar autores para las citas, como **Prem Rawat**, **Sadhguru**, **Siva P. de PVH**, **Sri Sri Ravi Shankar** y **Otros autores (Búsqueda / Aleatorio)** que toma de todos los existentes en A-Z Quotes.
+Permite seleccionar autores para las citas, como **Prem Rawat**, **Sadhguru**, **Siva P. de PVH**, **Sri Sri Ravi Shankar** y **Otros autores (Búsqueda / Aleatorio)**, que toma de todos los existentes en A-Z Quotes.
 
 También ofrece una lista de tags para buscar imágenes a gusto del usuario.
 
@@ -35,7 +33,6 @@ sudo apt install wallpaper-con-citas
 
 ---
 
-<a name="english"></a>
 ## English
 
 **Wallpaper Manager con Citas** is a graphical application developed in Python and GTK3, designed to automatically download high-quality wallpapers and overlay stylized quotes directly onto the image.
