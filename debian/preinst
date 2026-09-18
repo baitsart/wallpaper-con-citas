@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if dpkg -l | grep -q "^ii  wallpaper-manager "; then
+    echo "=========================================================================="
+    echo "ATENCIÓN: Se detectó 'wallpaper-manager' instalado en el sistema."
+    echo "Por favor, desinstálalo manualmente antes de continuar:"
+    echo "  sudo apt remove wallpaper-manager"
+    echo "=========================================================================="
+    exit 1
+fi
+
+#DEBHELPER#

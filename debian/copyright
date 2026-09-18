@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: wallpaper-con-citas
+Source: https://github.com/tu-usuario/wallpaper-con-citas
+
+Files: *
+Copyright: 2026 Rodrigo <baitsart@gmail.com>
+License: GPL-3.0+
