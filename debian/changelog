@@ -1,5 +1,6 @@
-wallpaper-con-citas (1.0.1) resolute; urgency=medium
-
+wallpaper-con-citas (1.0.3) resolute; urgency=medium
+  * Now, images can be downloaded from additional servers, such as pixabay.com and www.pexels.com. We also have a comprehensive «Otros autores» list—downloaded just once—that simplifies the process of searching for authors and retrieving citations.
+  * Add the icon file.
   * An application for downloading wallpapers from Wallhaven/Picsum and overlaying stylized quotes—in English or Spanish—directly onto the image. Initial release.
 
  -- Rodrigo Esteves <baitsart@gmail.com>  Thu, 18 Sep 2026 09:24:00 -0300

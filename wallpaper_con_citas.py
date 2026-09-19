@@ -28,16 +28,19 @@ from PIL import Image, ImageDraw, ImageFont
 
 HOME_DIR = Path.home()
 
-# 1. Directorios base
-BASE_DIR = HOME_DIR / ".wallpaper_manager"
-IMAGENES_QUOTES_DIR = BASE_DIR / "Buenas imágenes con citas"
+# 1. Directorios base (Recursos globales instalados en el sistema - Solo lectura)
+SHARE_DIR = Path("/usr/share/wallpaper_manager")
+BASE_DIR = SHARE_DIR
+IMAGENES_QUOTES_DIR = SHARE_DIR / "Buenas_imágenes_citas"
 QUOTES_DIR = IMAGENES_QUOTES_DIR / "Quotes"
 
-# 2. Caché y Configuración
+# 2. Caché y Configuración (Escritura en el Home del usuario)
 TEMP_DIR = Path(tempfile.gettempdir()) / "wallpaper_manager_cache"
-CONFIG_FILE = HOME_DIR / ".config" / "wallpaper_manager" / "auto-download.config"
-CONFIG_TAGS_PATH = HOME_DIR / ".config" / "wallpaper_manager" / "tags_activos.config"
-CONFIG_LANG_FILE = HOME_DIR / ".config" / "wallpaper_manager" / "language.config"
+
+# Ruta fija del archivo de tags en /usr/share/
+CONFIG_FILE = SHARE_DIR / "auto-download.config"
+CONFIG_TAGS_PATH = SHARE_DIR / "tags_activos.config"
+CONFIG_LANG_FILE = SHARE_DIR / "language.config"
 
 # 3. Creación de carpetas si no existen
 IMAGENES_QUOTES_DIR.mkdir(parents=True, exist_ok=True)
@@ -206,6 +209,8 @@ def obtener_directorios():
 
 SAVE_DIR, AUTO_DIR = obtener_directorios()
 WALLHAVEN_API_KEY = os.environ.get("WALLHAVEN_API_KEY", "jJm5diseSPiDVIqvvE7aUS4fWwgJ0koW")
+PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "57658781-0a7941b8305114c3f2db8a611")
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "b1NfvD9UGKtR2kymNDr2jHp02R2IbeXpQzLILZnni2T0O4o5utkDBf2w")
 
 HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
@@ -400,9 +405,42 @@ def actualizar_interfaz_grafica(resultado):
     return False # Importante para que GLib.idle_add no se repita
 
 def traducir_nativo(texto, lang="es"):
-    """Traduce usando solo librerías estándar de Python (sin pip ni dependencias)."""
+    """Traduce usando el script externo del sistema y tiene MyMemory como respaldo."""
     if not texto or len(texto.strip()) < 3:
         return texto
+
+    # 1. Intentar primero con el script externo del sistema
+    if lang == "es":
+        script_translate = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/auto-translate.py")
+        if script_translate.exists():
+            try:
+                res = subprocess.run(
+                    [sys.executable, str(script_translate), texto],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    salida_script = res.stdout.strip()
+                    
+                    # --- FILTRADO DE DEPURACIÓN AQUÍ ---
+                    # Si el script imprime "Español: ...", extraemos solo esa parte
+                    for linea in salida_script.splitlines():
+                        if "Español:" in linea:
+                            return linea.split("Español:", 1)[1].strip()
+                    
+                    # Si no contiene esos encabezados, usamos la última línea que no sea un aviso
+                    lineas_limpias = [
+                        l.strip() for l in salida_script.splitlines() 
+                        if l.strip() and not l.startswith("Traduciendo") and not l.startswith("Original:")
+                    ]
+                    if lineas_limpias:
+                        return lineas_limpias[-1]
+
+            except Exception as e:
+                print(f"Error ejecutando auto-translate.py: {e}")
+
+    # 2. Respaldo nativo con la API de MyMemory (si el script no existe o falló)
     try:
         url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(texto)}&langpair=en|{lang}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -414,7 +452,8 @@ def traducir_nativo(texto, lang="es"):
                     return traduccion
     except Exception:
         pass
-    return texto  # Si falla, devuelve el original para no romper nada
+
+    return texto
 
 def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     autor_nombre = autor_nombre.strip() if autor_nombre else ""
@@ -431,7 +470,7 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     url_meta = ""
     exito_web = False
 
-    # 1. Intentar obtener desde la web con others_authors.py (Margen de 18s)
+    # 1. Ejecutar script externo
     if script_path.exists():
         try:
             res = subprocess.run(
@@ -450,13 +489,14 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
 
     cita_pura = ""
 
-    # 2. Procesar la salida web si tuvo éxito
+    # 2. Filtrar SOLO el texto de la cita
     if exito_web and salida:
         for linea in salida.splitlines():
             linea_s = linea.strip()
             if not linea_s:
                 continue
             
+            # Capturar la URL de la cita si existe
             if linea_s.startswith("http") or linea_s.startswith("/quote/"):
                 if linea_s.startswith("/quote/"):
                     url_meta = f"https://www.azquotes.com{linea_s}"
@@ -464,20 +504,20 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
                     url_meta = linea_s
                 continue
 
-            if linea_s.startswith("Buscando:") or linea_s.startswith("Página del autor:") or linea_s.startswith("—"):
+            # Omitir metadatos de búsqueda e información del autor
+            if (linea_s.startswith("Buscando:") or 
+                linea_s.startswith("Página del autor:") or 
+                linea_s.startswith("—")):
                 continue
 
+            # Extraer solo el contenido de la cita suprimiendo el ID tipo [701698]
             match = re.match(r"^\[\d+\]\s*(.+)$", linea_s)
             if match:
                 cita_pura = match.group(1).strip()
             elif not cita_pura:
                 cita_pura = linea_s
 
-        # ¡TRADUCIR AQUÍ! Si vino de la web (inglés), lo pasamos al español de forma nativa
-        if cita_pura:
-            cita_pura = traducir_nativo(cita_pura, lang="es")
-
-    # 3. Respaldo local si la web no devolvió nada o dio timeout
+    # 3. Respaldo en archivos locales si falló la búsqueda web
     if not cita_pura:
         citas_locales = []
         partes_nombre = [p.lower() for p in autor_nombre.split() if len(p) > 2]
@@ -509,7 +549,7 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
 
         if citas_locales:
             cita_pura = random.choice(citas_locales)
-            url_meta = "" # Los locales no llevan URL de web
+            url_meta = ""
 
     if not cita_pura:
         return {
@@ -518,6 +558,10 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
             "Fecha": "",
             "URL": ""
         }
+
+    # 4. Traducir al español si el parámetro es 'es' o por defecto
+    if lang == "es":
+        cita_pura = traducir_nativo(cita_pura, lang="es")
 
     return {
         "Cita": cita_pura,
@@ -1249,7 +1293,13 @@ class PreviewDialog(Gtk.Dialog):
 
 class WallpaperManagerWindow(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Wallpaper Manager — Citas & Wallpapers")
+        super().__init__()
+        
+        header_bar = Gtk.HeaderBar()
+        header_bar.set_show_close_button(True)
+        header_bar.set_title("Wallpaper Manager — Citas & Wallpapers")
+        self.set_titlebar(header_bar)
+
         self.set_default_size(880, 600)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -1456,6 +1506,191 @@ class WallpaperManagerWindow(Gtk.Window):
                 if tag in self.chk_estilos:
                     self.chk_estilos[tag].set_active(True)
 
+    def obtener_imagenes_pixabay(self, query_tag, cantidad=5):
+        items = []
+        try:
+            params = {
+                "key": PIXABAY_API_KEY,
+                "q": urllib.parse.quote(query_tag),
+                "image_type": "photo",
+                "safesearch": "true",
+                "per_page": 20
+            }
+            query_str = urllib.parse.urlencode(params)
+            api_url = f"https://pixabay.com/api/?{query_str}"
+            req = urllib.request.Request(api_url, headers=HTTP_HEADERS)
+            
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    hits = data.get("hits", [])
+                    random.shuffle(hits)
+                    
+                    for hit in hits[:cantidad]:
+                        img_id = f"pixabay_{hit['id']}"
+                        thumb_url = hit.get("previewURL")
+                        full_url = hit.get("largeImageURL") or hit.get("webformatURL")
+                        
+                        thumb_path = TEMP_DIR / f"thumb_{img_id}.jpg"
+                        if not thumb_path.exists() and thumb_url:
+                            descargar_archivo(thumb_url, thumb_path)
+                            
+                        items.append({
+                            "id": img_id,
+                            "thumb_path": str(thumb_path),
+                            "full_url": full_url,
+                            "source_url": hit.get("pageURL", full_url)
+                        })
+        except Exception as e:
+            print(f"Error consultando Pixabay para '{query_tag}': {e}")
+        return items
+
+    def obtener_imagenes_pixabay(self, query_tag, cantidad=25):
+        items = []
+        try:
+            params = {
+                "key": PIXABAY_API_KEY,
+                "q": urllib.parse.quote(query_tag),
+                "image_type": "photo",
+                "safesearch": "true",
+                "per_page": 40
+            }
+            query_str = urllib.parse.urlencode(params)
+            api_url = f"https://pixabay.com/api/?{query_str}"
+            req = urllib.request.Request(api_url, headers=HTTP_HEADERS)
+            
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    hits = data.get("hits", [])
+                    # Filtrar estrictamente no verticales (ancho >= alto)
+                    hits = [h for h in hits if h.get("imageWidth", 0) >= h.get("imageHeight", 0)]
+                    random.shuffle(hits)
+                    
+                    for hit in hits[:cantidad]:
+                        img_id = f"pixabay_{hit['id']}"
+                        thumb_url = hit.get("previewURL")
+                        full_url = hit.get("largeImageURL") or hit.get("webformatURL")
+                        
+                        thumb_path = TEMP_DIR / f"thumb_{img_id}.jpg"
+                        if not thumb_path.exists() and thumb_url:
+                            descargar_archivo(thumb_url, thumb_path)
+                            
+                        items.append({
+                            "id": img_id,
+                            "thumb_path": str(thumb_path),
+                            "full_url": full_url,
+                            "source_url": hit.get("pageURL", full_url)
+                        })
+        except Exception as e:
+            print(f"Error consultando Pixabay para '{query_tag}': {e}")
+        return items
+
+    def obtener_imagenes_pexels(self, query_tag, cantidad=25):
+        items = []
+        try:
+            params = {"query": query_tag, "per_page": 30}
+            query_str = urllib.parse.urlencode(params)
+            api_url = f"https://api.pexels.com/v1/search?{query_str}"
+            
+            headers_pexels = {
+                **HTTP_HEADERS,
+                "Authorization": PEXELS_API_KEY
+            }
+            req = urllib.request.Request(api_url, headers=headers_pexels)
+            
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    photos = data.get("photos", [])
+                    # Filtrar estrictamente no verticales (ancho >= alto)
+                    photos = [p for p in photos if p.get("width", 0) >= p.get("height", 0)]
+                    random.shuffle(photos)
+                    
+                    for photo in photos[:cantidad]:
+                        img_id = f"pexels_{photo['id']}"
+                        src = photo.get("src", {})
+                        thumb_url = src.get("medium") or src.get("small")
+                        full_url = src.get("large2x") or src.get("original")
+                        
+                        thumb_path = TEMP_DIR / f"thumb_{img_id}.jpg"
+                        if not thumb_path.exists() and thumb_url:
+                            descargar_archivo(thumb_url, thumb_path)
+                            
+                        items.append({
+                            "id": img_id,
+                            "thumb_path": str(thumb_path),
+                            "full_url": full_url,
+                            "source_url": photo.get("url", full_url)
+                        })
+        except Exception as e:
+            print(f"Error consultando Pexels para '{query_tag}': {e}")
+        return items
+
+    def cargar_imagenes_async(self):
+        self.lbl_status.set_text("Obteniendo exactamente 35 fondos...")
+        for child in self.flowbox.get_children():
+            self.flowbox.remove(child)
+
+        # Tomamos los tags activos en orden (sin random)
+        tags_activos = [tag for tag, chk in self.chk_estilos.items() if chk.get_active()]
+        if not tags_activos:
+            tags_activos = ["nature"]
+
+        def worker():
+            items = []
+            vistos = set()
+
+            # Recorremos los tags activos ordenadamente hasta completar 35
+            for query_tag in tags_activos:
+                if len(items) >= 35:
+                    break
+                
+                # 1. Wallhaven (filtrando horizontales/cuadrados)
+                try:
+                    params = {"q": query_tag, "sorting": "date_added", "purity": "100", "apikey": WALLHAVEN_API_KEY}
+                    api_url = f"https://wallhaven.cc/api/v1/search?{urllib.parse.urlencode(params)}"
+                    req = urllib.request.Request(api_url, headers=HTTP_HEADERS)
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        if resp.status == 200:
+                            data = json.loads(resp.read().decode("utf-8"))
+                            for item in data.get("data", []):
+                                if len(items) >= 35:
+                                    break
+                                if item["id"] not in vistos:
+                                    if item.get("width", 0) >= item.get("height", 0):
+                                        vistos.add(item["id"])
+                                        thumb_path = TEMP_DIR / f"thumb_{item['id']}.jpg"
+                                        if not thumb_path.exists():
+                                            descargar_archivo(item["thumbs"]["small"], thumb_path)
+                                        items.append({
+                                            "id": item["id"],
+                                            "thumb_path": str(thumb_path),
+                                            "full_url": item["path"],
+                                            "source_url": item.get("url", item["path"])
+                                        })
+                except Exception as e:
+                    print(f"Aviso Wallhaven ({query_tag}): {e}")
+
+                # 2. Rellenar con Pixabay / Pexels si aún faltan para llegar a 35
+                if len(items) < 35:
+                    pixabay_items = self.obtener_imagenes_pixabay(query_tag, cantidad=35 - len(items))
+                    for p_item in pixabay_items:
+                        if p_item["id"] not in vistos and len(items) < 35:
+                            vistos.add(p_item["id"])
+                            items.append(p_item)
+
+            # 3. Respaldo estricto con Picsum si faltan elementos para completar los 35 exactos
+            if len(items) < 35:
+                faltantes = 35 - len(items)
+                items.extend(self.obtener_imagenes_respaldo_picsum(cantidad=faltantes))
+
+            # Limitamos estrictamente a los primeros 35 elementos recopilados
+            items = items[:35]
+            GLib.idle_add(self.actualizar_grid_miniaturas, items)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def obtener_imagenes_respaldo_picsum(self, cantidad=15):
         """
         Generador de respaldo usando Picsum Photos cuando Wallhaven está caído (Error 521/Servidor caído).
@@ -1486,10 +1721,11 @@ class WallpaperManagerWindow(Gtk.Window):
         return items
 
     def cargar_imagenes_async(self):
-        self.lbl_status.set_text("Obteniendo catálogo de imágenes...")
+        self.lbl_status.set_text("Obteniendo aleatoriamente 35 fondos de varios tags y sitios...")
         for child in self.flowbox.get_children():
             self.flowbox.remove(child)
 
+        # Tomamos los tags activos
         tags_activos = [tag for tag, chk in self.chk_estilos.items() if chk.get_active()]
         if not tags_activos:
             tags_activos = ["nature"]
@@ -1497,74 +1733,70 @@ class WallpaperManagerWindow(Gtk.Window):
         def worker():
             items = []
             vistos = set()
-            ultimo_error = ""
+            sitios = ["wallhaven", "pixabay"]
 
-            tags_para_buscar = []
-            while len(tags_para_buscar) < 25:
-                tanda = tags_activos[:]
-                random.shuffle(tanda)
-                tags_para_buscar.extend(tanda)
-            tags_para_buscar = tags_para_buscar[:25]
+            # Bucle para recolectar de forma aleatoria hasta llegar a 35
+            intentos = 0
+            while len(items) < 35 and intentos < 60:
+                intentos += 1
+                tag_actual = random.choice(tags_activos)
+                sitio_actual = random.choice(sitios)
 
-            # INTENTO 1: Wallhaven
-            for query_tag in tags_para_buscar:
-                params_base = {"q": query_tag, "sorting": "random", "purity": "100"}
-                intentos = [{**params_base, "apikey": WALLHAVEN_API_KEY}, params_base]
-                data = None
-
-                for params in intentos:
+                if sitio_actual == "wallhaven":
                     try:
-                        query = urllib.parse.urlencode(params)
-                        api_url = f"https://wallhaven.cc/api/v1/search?{query}"
+                        # Usamos orden aleatorio en la API de Wallhaven si lo soporta, o barajamos el resultado
+                        params = {"q": tag_actual, "sorting": "random", "purity": "100", "apikey": WALLHAVEN_API_KEY}
+                        api_url = f"https://wallhaven.cc/api/v1/search?{urllib.parse.urlencode(params)}"
                         req = urllib.request.Request(api_url, headers=HTTP_HEADERS)
                         with urllib.request.urlopen(req, timeout=8) as resp:
                             if resp.status == 200:
                                 data = json.loads(resp.read().decode("utf-8"))
-                                break
-                    except urllib.error.HTTPError as e:
-                        ultimo_error = f"HTTP {e.code}: {e.reason}"
-                        if e.code in [403, 521, 500, 502, 503]:
-                            break
+                                pool_wh = data.get("data", [])
+                                random.shuffle(pool_wh)
+                                for item in pool_wh:
+                                    if len(items) >= 35:
+                                        break
+                                    if item["id"] not in vistos:
+                                        if item.get("width", 0) >= item.get("height", 0):
+                                            vistos.add(item["id"])
+                                            thumb_path = TEMP_DIR / f"thumb_{item['id']}.jpg"
+                                            if not thumb_path.exists():
+                                                descargar_archivo(item["thumbs"]["small"], thumb_path)
+                                            items.append({
+                                                "id": item["id"],
+                                                "thumb_path": str(thumb_path),
+                                                "full_url": item["path"],
+                                                "source_url": item.get("url", item["path"])
+                                            })
                     except Exception as e:
-                        ultimo_error = str(e)
+                        print(f"Aviso Wallhaven ({tag_actual}): {e}")
 
-                if not data or "data" not in data:
-                    continue
+                elif sitio_actual == "pixabay":
+                    try:
+                        pixabay_items = self.obtener_imagenes_pixabay(tag_actual, cantidad=15)
+                        random.shuffle(pixabay_items)
+                        for p_item in pixabay_items:
+                            if len(items) >= 35:
+                                break
+                            if p_item["id"] not in vistos:
+                                vistos.add(p_item["id"])
+                                items.append(p_item)
+                    except Exception as e:
+                        print(f"Aviso Pixabay ({tag_actual}): {e}")
 
-                disponibles = [x for x in data.get("data", []) if x.get("id") not in vistos]
-                if not disponibles:
-                    continue
+            # Respaldo con Picsum de manera aleatoria si aún faltan elementos para los 35 exactos
+            if len(items) < 35:
+                faltantes = 35 - len(items)
+                items.extend(self.obtener_imagenes_respaldo_picsum(cantidad=faltantes))
 
-                item = random.choice(disponibles)
-                vistos.add(item["id"])
-
-                try:
-                    thumb_path = TEMP_DIR / f"thumb_{item['id']}.jpg"
-                    if not thumb_path.exists():
-                        descargar_archivo(item["thumbs"]["small"], thumb_path)
-                    items.append({
-                        "id": item["id"],
-                        "thumb_path": str(thumb_path),
-                        "full_url": item["path"],
-                        "source_url": item.get("url", item["path"])
-                    })
-                except Exception as e:
-                    ultimo_error = str(e)
-
-            # INTENTO 2: Si Wallhaven falló totalmente (error 521), usar Picsum
-            if not items:
-                GLib.idle_add(self.lbl_status.set_text, "Wallhaven fuera de servicio (521). Cargando servidor secundario...")
-                items = self.obtener_imagenes_respaldo_picsum(cantidad=15)
-
-            if not items:
-                GLib.idle_add(self.lbl_status.set_text, f"Error al conectar: {ultimo_error}")
-                return
-
+            # Mezcla final de todo el conjunto y corte estricto a 35
             random.shuffle(items)
+            items = items[:35]
             GLib.idle_add(self.actualizar_grid_miniaturas, items)
 
         threading.Thread(target=worker, daemon=True).start()
 
+    
     def actualizar_grid_miniaturas(self, items):
             self.imagenes_cache = items
             self.lbl_status.set_text(f"{len(items)} miniaturas listas.")
@@ -1593,17 +1825,33 @@ class WallpaperManagerWindow(Gtk.Window):
         item_data = getattr(child.get_child(), "item_data", None)
         if not item_data:
             return
-
+    
         autor_otro_override = ""
         if self.citas_activas and self.autor_seleccionado == "otros":
-            sel_dialog = AuthorSelectionDialog(self)
-            res = sel_dialog.run()
-            if res == Gtk.ResponseType.OK:
-                autor_otro_override = sel_dialog.autor_seleccionado
-            else:
-                sel_dialog.destroy()
-                return
-            sel_dialog.destroy()
+            # Buscar el script externo en las rutas permitidas
+            script_author_dialog = IMAGENES_QUOTES_DIR / "author_dialog.py"
+            if not script_author_dialog.exists():
+                script_author_dialog = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/author_dialog.py")
+    
+            if script_author_dialog.exists():
+                try:
+                    res = subprocess.run(
+                        [sys.executable, str(script_author_dialog)],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        # --- FILTRO APLICADO AQUÍ ---
+                        # Nos quedamos con la última línea que no esté vacía (el nombre real del autor)
+                        lineas = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
+                        if lineas:
+                            autor_otro_override = lineas[-1]
+                except Exception as e:
+                    print(f"Error ejecutando author_dialog.py: {e}")
+    
+            if not autor_otro_override:
+                return  # Si canceló o no devolvió nada, se cancela la vista previa
 
         dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
         dialog.run()

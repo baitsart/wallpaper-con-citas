@@ -1,5 +1,12 @@
+# Binario principal
 wallpaper-con-citas usr/bin/
+
+# Script principal a la ruta de acciones
 wallpaper_con_citas.py usr/share/wallpaper_manager/w_m/actions/
+
+# Lanzador de aplicaciones
 debian/wallpaper_con_citas.desktop usr/share/applications/
-skel/.wallpaper_manager/ etc/skel/
-skel/.config/wallpaper_manager/ etc/skel/.config/
+
+# Recursos estáticos (Citas, autores, etc.) directo a /usr/share/wallpaper_manager/
+skel/wallpaper_manager/Buenas_imágenes_citas usr/share/wallpaper_manager/
+skel/wallpaper_manager/iconos usr/share/wallpaper_manager/

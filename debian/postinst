@@ -3,7 +3,7 @@ set -e
 
 if [ "$1" = "configure" ]; then
     # Opcional: otorgar permisos de lectura y escritura a la carpeta de acciones e íconos
-    chmod -R 777 /usr/share/wallpaper_manager/w_m/ 2>/dev/null || true
+    chmod -R 777 /usr/share/wallpaper_manager/ 2>/dev/null || true
 
     # Actualiza la base de datos de lanzadores (.desktop)
     update-desktop-database -q /usr/share/applications || true
