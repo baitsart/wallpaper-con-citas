@@ -23,6 +23,28 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 from PIL import Image, ImageDraw, ImageFont
 
 # ----------------------------------------------------------------------
+# UTILIDADES GENERALES
+# ----------------------------------------------------------------------
+
+def leer_json_seguro(ruta_archivo):
+    """Lee un archivo JSON de forma segura manejando archivos vacíos o corruptos."""
+    if not ruta_archivo.exists() or ruta_archivo.stat().st_size == 0:
+        return None
+    try:
+        with open(ruta_archivo, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        print(f"Advertencia: El archivo JSON en {ruta_archivo} está corrupto. Borrando...")
+        try:
+            ruta_archivo.unlink()
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        print(f"Error leyendo JSON: {e}")
+        return None
+        
+# ----------------------------------------------------------------------
 # CONFIGURACIÓN Y RUTAS DE ALMACENAMIENTO UNIVERSALES ($HOME)
 # ----------------------------------------------------------------------
 
@@ -162,9 +184,9 @@ def guardar_tags_activos(tags_config):
 def buscar_script(nombre_script):
     """
     Busca el script ejecutable (.py) probando en:
-    1. ~/.wallpaper_manager/
-    2. ~/.wallpaper_manager/Buenas imágenes con citas/
-    3. ~/.wallpaper_manager/Buenas imágenes con citas/Quotes/
+    1. /usr/share/wallpaper_manager/
+    2. /usr/share/wallpaper_manager/Buenas_imágenes_citas
+    3. /usr/share/wallpaper_manager/Buenas_imágenes_citas/Quotes/
     """
     rutas_posibles = [
         BASE_DIR / nombre_script,
@@ -470,80 +492,67 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     url_meta = ""
     exito_web = False
 
-    # 1. Ejecutar script externo
+    # 1. Ejecutar script externo con control exhaustivo de errores
     if script_path.exists():
         try:
             res = subprocess.run(
                 [sys.executable, str(script_path), autor_nombre],
                 capture_output=True,
                 text=True,
-                timeout=18
+                timeout=50
             )
-            salida = res.stdout.strip()
-            if res.returncode == 0 and salida:
+            if res.returncode == 0 and res.stdout.strip():
+                salida = res.stdout.strip()
                 exito_web = True
         except subprocess.TimeoutExpired:
-            print(f"Aviso: others_authors.py tardó demasiado para {autor_nombre}. Usando respaldo local...")
+            print(f"Aviso: others_authors.py tardó demasiado. Usando respaldo local...")
         except Exception as e:
             print(f"Error ejecutando others_authors.py: {e}. Usando respaldo local...")
 
     cita_pura = ""
 
-    # 2. Filtrar SOLO el texto de la cita
+    # 2. Procesar salida web si fue exitosa
     if exito_web and salida:
         for linea in salida.splitlines():
             linea_s = linea.strip()
             if not linea_s:
                 continue
             
-            # Capturar la URL de la cita si existe
             if linea_s.startswith("http") or linea_s.startswith("/quote/"):
-                if linea_s.startswith("/quote/"):
-                    url_meta = f"https://www.azquotes.com{linea_s}"
-                else:
-                    url_meta = linea_s
+                url_meta = f"https://www.azquotes.com{linea_s}" if linea_s.startswith("/quote/") else linea_s
                 continue
 
-            # Omitir metadatos de búsqueda e información del autor
-            if (linea_s.startswith("Buscando:") or 
-                linea_s.startswith("Página del autor:") or 
-                linea_s.startswith("—")):
+            if linea_s.startswith("Buscando:") or linea_s.startswith("Página del autor:") or linea_s.startswith("—"):
                 continue
 
-            # Extraer solo el contenido de la cita suprimiendo el ID tipo [701698]
             match = re.match(r"^\[\d+\]\s*(.+)$", linea_s)
             if match:
                 cita_pura = match.group(1).strip()
             elif not cita_pura:
                 cita_pura = linea_s
 
-    # 3. Respaldo en archivos locales si falló la búsqueda web
+    # 3. Respaldo local garantizado si falla la web o el JSON externo
     if not cita_pura:
         citas_locales = []
         partes_nombre = [p.lower() for p in autor_nombre.split() if len(p) > 2]
         directorio_busqueda = HOME_DIR if 'HOME_DIR' in globals() and HOME_DIR.exists() else IMAGENES_QUOTES_DIR
         
         for f in directorio_busqueda.glob("*.txt"):
-            nombre_archivo_lower = f.name.lower()
-            if any(p in nombre_archivo_lower for p in partes_nombre):
+            if any(p in f.name.lower() for p in partes_nombre):
                 try:
                     with open(f, "r", encoding="utf-8", errors="ignore") as file:
                         contenido = file.read()
-                        
-                    if "---" in contenido:
-                        contenido = contenido.split("---")[-1]
+                        if "---" in contenido:
+                            contenido = contenido.split("---")[-1]
 
-                    for line in contenido.splitlines():
-                        linea = line.strip()
-                        if not linea or linea.startswith("http") or linea.startswith("/quote/"):
-                            continue
-                        
-                        texto_limpio = re.sub(r"^\[\d+\]\s*", "", linea)
-                        texto_limpio = re.sub(r"^Pág(ina)?\s*\d+:?\s*", "", texto_limpio, flags=re.IGNORECASE)
-                        texto_limpio = texto_limpio.strip("“\"” \n\t")
-                        
-                        if texto_limpio and len(texto_limpio) > 10:
-                            citas_locales.append(texto_limpio)
+                        for line in contenido.splitlines():
+                            linea = line.strip()
+                            if not linea or linea.startswith("http") or linea.startswith("/quote/"):
+                                continue
+                            texto_limpio = re.sub(r"^\[\d+\]\s*", "", linea)
+                            texto_limpio = re.sub(r"^Pág(ina)?\s*\d+:?\s*", "", texto_limpio, flags=re.IGNORECASE).strip("“\"” \n\t")
+                            if len(texto_limpio) > 10:
+                                citas_locales.append(texto_limpio)
                 except Exception as e:
                     print(f"Error leyendo archivo local {f}: {e}")
 
@@ -559,7 +568,6 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
             "URL": ""
         }
 
-    # 4. Traducir al español si el parámetro es 'es' o por defecto
     if lang == "es":
         cita_pura = traducir_nativo(cita_pura, lang="es")
 
@@ -1092,10 +1100,18 @@ class PreviewDialog(Gtk.Dialog):
         if not self.hd_image_path.exists():
             return False
         try:
+            # Si está cargando, pasamos cadenas vacías para que la imagen se vea limpia sin textos extraños
+            if getattr(self, "cargando_cita", False):
+                texto_cita = ""
+                texto_autor = ""
+            else:
+                texto_cita = self.cita_data.get("Cita", "") if self.main_app.citas_activas else ""
+                texto_autor = self.cita_data.get("Autor", "") if self.main_app.citas_activas else ""
+
             comp = generate_composite_image(
                 str(self.hd_image_path),
-                self.cita_data.get("Cita", "") if self.main_app.citas_activas else "",
-                self.cita_data.get("Autor", "") if self.main_app.citas_activas else "",
+                texto_cita,
+                texto_autor,
                 font_path=self.font_path,
                 font_size=self.font_size,
                 offset_x=self.offset_x,
@@ -1118,12 +1134,23 @@ class PreviewDialog(Gtk.Dialog):
         return False
 
     def on_cambiar_cita(self, widget):
-        self.cita_data = obtener_cita_datos(
-            self.main_app.autor_seleccionado,
-            self.main_app.idioma_actual,
-            self.autor_otro_actual,
-        )
+        # Activamos el indicador de carga sin ensuciar el diccionario de la cita con textos feos
+        self.cargando_cita = True
         self.renderizar_vista_previa()
+
+        def worker_cambiar_cita():
+            try:
+                self.cita_data = obtener_cita_datos(
+                    self.main_app.autor_seleccionado,
+                    self.main_app.idioma_actual,
+                    self.autor_otro_actual,
+                )
+            finally:
+                self.cargando_cita = False
+                GLib.idle_add(self.renderizar_vista_previa)
+
+        threading.Thread(target=worker_cambiar_cita, daemon=True).start()
+
 
     def on_cambiar_imagen(self, widget):
         if self.main_app.imagenes_cache:
@@ -1502,7 +1529,7 @@ class WallpaperManagerWindow(Gtk.Window):
         if widget.get_active():
             self.autor_seleccionado = autor_id
             if autor_id == "siva":
-                tag = IMAGE_STYLES["Borobudur Temple"]
+                tag = "Borobudur Temple"
                 if tag in self.chk_estilos:
                     self.chk_estilos[tag].set_active(True)
 
@@ -1628,7 +1655,7 @@ class WallpaperManagerWindow(Gtk.Window):
         return items
 
     def cargar_imagenes_async(self):
-        self.lbl_status.set_text("Obteniendo exactamente 35 fondos...")
+        self.lbl_status.set_text("Obteniendo exactamente 25 fondos...")
         for child in self.flowbox.get_children():
             self.flowbox.remove(child)
 
@@ -1641,9 +1668,9 @@ class WallpaperManagerWindow(Gtk.Window):
             items = []
             vistos = set()
 
-            # Recorremos los tags activos ordenadamente hasta completar 35
+            # Recorremos los tags activos ordenadamente hasta completar 25
             for query_tag in tags_activos:
-                if len(items) >= 35:
+                if len(items) >= 25:
                     break
                 
                 # 1. Wallhaven (filtrando horizontales/cuadrados)
@@ -1655,7 +1682,7 @@ class WallpaperManagerWindow(Gtk.Window):
                         if resp.status == 200:
                             data = json.loads(resp.read().decode("utf-8"))
                             for item in data.get("data", []):
-                                if len(items) >= 35:
+                                if len(items) >= 25:
                                     break
                                 if item["id"] not in vistos:
                                     if item.get("width", 0) >= item.get("height", 0):
@@ -1672,21 +1699,21 @@ class WallpaperManagerWindow(Gtk.Window):
                 except Exception as e:
                     print(f"Aviso Wallhaven ({query_tag}): {e}")
 
-                # 2. Rellenar con Pixabay / Pexels si aún faltan para llegar a 35
-                if len(items) < 35:
-                    pixabay_items = self.obtener_imagenes_pixabay(query_tag, cantidad=35 - len(items))
+                # 2. Rellenar con Pixabay / Pexels si aún faltan para llegar a 25
+                if len(items) < 25:
+                    pixabay_items = self.obtener_imagenes_pixabay(query_tag, cantidad=25 - len(items))
                     for p_item in pixabay_items:
-                        if p_item["id"] not in vistos and len(items) < 35:
+                        if p_item["id"] not in vistos and len(items) < 25:
                             vistos.add(p_item["id"])
                             items.append(p_item)
 
-            # 3. Respaldo estricto con Picsum si faltan elementos para completar los 35 exactos
-            if len(items) < 35:
-                faltantes = 35 - len(items)
+            # 3. Respaldo estricto con Picsum si faltan elementos para completar los 25 exactos
+            if len(items) < 25:
+                faltantes = 25 - len(items)
                 items.extend(self.obtener_imagenes_respaldo_picsum(cantidad=faltantes))
 
-            # Limitamos estrictamente a los primeros 35 elementos recopilados
-            items = items[:35]
+            # Limitamos estrictamente a los primeros 25 elementos recopilados
+            items = items[:25]
             GLib.idle_add(self.actualizar_grid_miniaturas, items)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1721,7 +1748,7 @@ class WallpaperManagerWindow(Gtk.Window):
         return items
 
     def cargar_imagenes_async(self):
-        self.lbl_status.set_text("Obteniendo aleatoriamente 35 fondos de varios tags y sitios...")
+        self.lbl_status.set_text("Obteniendo aleatoriamente 25 fondos de varios tags y sitios...")
         for child in self.flowbox.get_children():
             self.flowbox.remove(child)
 
@@ -1735,9 +1762,9 @@ class WallpaperManagerWindow(Gtk.Window):
             vistos = set()
             sitios = ["wallhaven", "pixabay"]
 
-            # Bucle para recolectar de forma aleatoria hasta llegar a 35
+            # Bucle para recolectar de forma aleatoria hasta llegar a 25
             intentos = 0
-            while len(items) < 35 and intentos < 60:
+            while len(items) < 25 and intentos < 60:
                 intentos += 1
                 tag_actual = random.choice(tags_activos)
                 sitio_actual = random.choice(sitios)
@@ -1754,7 +1781,7 @@ class WallpaperManagerWindow(Gtk.Window):
                                 pool_wh = data.get("data", [])
                                 random.shuffle(pool_wh)
                                 for item in pool_wh:
-                                    if len(items) >= 35:
+                                    if len(items) >= 25:
                                         break
                                     if item["id"] not in vistos:
                                         if item.get("width", 0) >= item.get("height", 0):
@@ -1776,7 +1803,7 @@ class WallpaperManagerWindow(Gtk.Window):
                         pixabay_items = self.obtener_imagenes_pixabay(tag_actual, cantidad=15)
                         random.shuffle(pixabay_items)
                         for p_item in pixabay_items:
-                            if len(items) >= 35:
+                            if len(items) >= 25:
                                 break
                             if p_item["id"] not in vistos:
                                 vistos.add(p_item["id"])
@@ -1784,78 +1811,86 @@ class WallpaperManagerWindow(Gtk.Window):
                     except Exception as e:
                         print(f"Aviso Pixabay ({tag_actual}): {e}")
 
-            # Respaldo con Picsum de manera aleatoria si aún faltan elementos para los 35 exactos
-            if len(items) < 35:
-                faltantes = 35 - len(items)
+            # Respaldo con Picsum de manera aleatoria si aún faltan elementos para los 25 exactos
+            if len(items) < 25:
+                faltantes = 25 - len(items)
                 items.extend(self.obtener_imagenes_respaldo_picsum(cantidad=faltantes))
 
-            # Mezcla final de todo el conjunto y corte estricto a 35
+            # Mezcla final de todo el conjunto y corte estricto a 25
             random.shuffle(items)
-            items = items[:35]
+            items = items[:25]
             GLib.idle_add(self.actualizar_grid_miniaturas, items)
 
         threading.Thread(target=worker, daemon=True).start()
 
     
     def actualizar_grid_miniaturas(self, items):
-            self.imagenes_cache = items
-            self.lbl_status.set_text(f"{len(items)} miniaturas listas.")
-    
-            for item in items:
+        self.imagenes_cache = items
+        self.lbl_status.set_text(f"{len(items)} miniaturas listas.")
+
+        for item in items:
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(item["thumb_path"], 170, 110, True)
+                img = Gtk.Image.new_from_pixbuf(pixbuf)
+                box = Gtk.EventBox()
+                box.add(img)
+                box.item_data = item
+                self.flowbox.add(box)
+            except Exception as e:
+                print(f"Error cargando miniatura {item['thumb_path']}: {e}")
+                # Si el archivo está corrupto, lo elimina para que la próxima lo descargue bien
                 try:
-                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(item["thumb_path"], 170, 110, True)
-                    img = Gtk.Image.new_from_pixbuf(pixbuf)
-                    box = Gtk.EventBox()
-                    box.add(img)
-                    box.item_data = item
-                    self.flowbox.add(box)
-                except Exception as e:
-                    print(f"Error cargando miniatura {item['thumb_path']}: {e}")
-                    # Si el archivo está corrupto, lo elimina para que la próxima lo descargue bien
-                    try:
-                        if os.path.exists(item["thumb_path"]):
-                            os.remove(item["thumb_path"])
-                    except Exception:
-                        pass
-                    continue
-    
-            self.flowbox.show_all()
+                    if os.path.exists(item["thumb_path"]):
+                        os.remove(item["thumb_path"])
+                except Exception:
+                    pass
+                continue
+
+        self.flowbox.show_all()
 
     def on_imagen_doble_click(self, flowbox, child):
         item_data = getattr(child.get_child(), "item_data", None)
         if not item_data:
             return
-    
-        autor_otro_override = ""
-        if self.citas_activas and self.autor_seleccionado == "otros":
-            # Buscar el script externo en las rutas permitidas
-            script_author_dialog = IMAGENES_QUOTES_DIR / "author_dialog.py"
-            if not script_author_dialog.exists():
-                script_author_dialog = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/author_dialog.py")
-    
-            if script_author_dialog.exists():
-                try:
-                    res = subprocess.run(
-                        [sys.executable, str(script_author_dialog)],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        # --- FILTRO APLICADO AQUÍ ---
-                        # Nos quedamos con la última línea que no esté vacía (el nombre real del autor)
-                        lineas = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
-                        if lineas:
-                            autor_otro_override = lineas[-1]
-                except Exception as e:
-                    print(f"Error ejecutando author_dialog.py: {e}")
-    
-            if not autor_otro_override:
-                return  # Si canceló o no devolvió nada, se cancela la vista previa
 
-        dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
-        dialog.run()
-        dialog.destroy()
+        def tarea_segundo_plano():
+            autor_otro_override = ""
+            if self.citas_activas and self.autor_seleccionado == "otros":
+                GLib.idle_add(self.lbl_status.set_text, "Esperando selección de autor...")
+                
+                script_author_dialog = IMAGENES_QUOTES_DIR / "author_dialog.py"
+                if not script_author_dialog.exists():
+                    script_author_dialog = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/author_dialog.py")
+
+                if script_author_dialog.exists():
+                    try:
+                        res = subprocess.run(
+                            [sys.executable, str(script_author_dialog)],
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        if res.returncode == 0 and res.stdout.strip():
+                            lineas = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
+                            if lineas:
+                                autor_otro_override = lineas[-1]
+                    except Exception as e:
+                        print(f"Error ejecutando author_dialog.py: {e}")
+
+                if not autor_otro_override:
+                    GLib.idle_add(self.lbl_status.set_text, "Búsqueda de autor cancelada.")
+                    return
+
+            def abrir_preview():
+                self.lbl_status.set_text("Listo.")
+                dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
+                dialog.run()
+                dialog.destroy()
+                return False
+
+            GLib.idle_add(abrir_preview)
+
+        threading.Thread(target=tarea_segundo_plano, daemon=True).start()
 
 
     def on_close_window(self, widget, event):
