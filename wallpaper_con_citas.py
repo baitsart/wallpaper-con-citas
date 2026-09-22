@@ -23,28 +23,6 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 from PIL import Image, ImageDraw, ImageFont
 
 # ----------------------------------------------------------------------
-# UTILIDADES GENERALES
-# ----------------------------------------------------------------------
-
-def leer_json_seguro(ruta_archivo):
-    """Lee un archivo JSON de forma segura manejando archivos vacíos o corruptos."""
-    if not ruta_archivo.exists() or ruta_archivo.stat().st_size == 0:
-        return None
-    try:
-        with open(ruta_archivo, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        print(f"Advertencia: El archivo JSON en {ruta_archivo} está corrupto. Borrando...")
-        try:
-            ruta_archivo.unlink()
-        except Exception:
-            pass
-        return None
-    except Exception as e:
-        print(f"Error leyendo JSON: {e}")
-        return None
-        
-# ----------------------------------------------------------------------
 # CONFIGURACIÓN Y RUTAS DE ALMACENAMIENTO UNIVERSALES ($HOME)
 # ----------------------------------------------------------------------
 
@@ -184,9 +162,9 @@ def guardar_tags_activos(tags_config):
 def buscar_script(nombre_script):
     """
     Busca el script ejecutable (.py) probando en:
-    1. /usr/share/wallpaper_manager/
-    2. /usr/share/wallpaper_manager/Buenas_imágenes_citas
-    3. /usr/share/wallpaper_manager/Buenas_imágenes_citas/Quotes/
+    1. ~/.wallpaper_manager/
+    2. ~/.wallpaper_manager/Buenas imágenes con citas/
+    3. ~/.wallpaper_manager/Buenas imágenes con citas/Quotes/
     """
     rutas_posibles = [
         BASE_DIR / nombre_script,
@@ -492,67 +470,80 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     url_meta = ""
     exito_web = False
 
-    # 1. Ejecutar script externo con control exhaustivo de errores
+    # 1. Ejecutar script externo
     if script_path.exists():
         try:
             res = subprocess.run(
                 [sys.executable, str(script_path), autor_nombre],
                 capture_output=True,
                 text=True,
-                timeout=50
+                timeout=18
             )
-            if res.returncode == 0 and res.stdout.strip():
-                salida = res.stdout.strip()
+            salida = res.stdout.strip()
+            if res.returncode == 0 and salida:
                 exito_web = True
         except subprocess.TimeoutExpired:
-            print(f"Aviso: others_authors.py tardó demasiado. Usando respaldo local...")
+            print(f"Aviso: others_authors.py tardó demasiado para {autor_nombre}. Usando respaldo local...")
         except Exception as e:
             print(f"Error ejecutando others_authors.py: {e}. Usando respaldo local...")
 
     cita_pura = ""
 
-    # 2. Procesar salida web si fue exitosa
+    # 2. Filtrar SOLO el texto de la cita
     if exito_web and salida:
         for linea in salida.splitlines():
             linea_s = linea.strip()
             if not linea_s:
                 continue
             
+            # Capturar la URL de la cita si existe
             if linea_s.startswith("http") or linea_s.startswith("/quote/"):
-                url_meta = f"https://www.azquotes.com{linea_s}" if linea_s.startswith("/quote/") else linea_s
+                if linea_s.startswith("/quote/"):
+                    url_meta = f"https://www.azquotes.com{linea_s}"
+                else:
+                    url_meta = linea_s
                 continue
 
-            if linea_s.startswith("Buscando:") or linea_s.startswith("Página del autor:") or linea_s.startswith("—"):
+            # Omitir metadatos de búsqueda e información del autor
+            if (linea_s.startswith("Buscando:") or 
+                linea_s.startswith("Página del autor:") or 
+                linea_s.startswith("—")):
                 continue
 
+            # Extraer solo el contenido de la cita suprimiendo el ID tipo [701698]
             match = re.match(r"^\[\d+\]\s*(.+)$", linea_s)
             if match:
                 cita_pura = match.group(1).strip()
             elif not cita_pura:
                 cita_pura = linea_s
 
-    # 3. Respaldo local garantizado si falla la web o el JSON externo
+    # 3. Respaldo en archivos locales si falló la búsqueda web
     if not cita_pura:
         citas_locales = []
         partes_nombre = [p.lower() for p in autor_nombre.split() if len(p) > 2]
         directorio_busqueda = HOME_DIR if 'HOME_DIR' in globals() and HOME_DIR.exists() else IMAGENES_QUOTES_DIR
         
         for f in directorio_busqueda.glob("*.txt"):
-            if any(p in f.name.lower() for p in partes_nombre):
+            nombre_archivo_lower = f.name.lower()
+            if any(p in nombre_archivo_lower for p in partes_nombre):
                 try:
                     with open(f, "r", encoding="utf-8", errors="ignore") as file:
                         contenido = file.read()
-                        if "---" in contenido:
-                            contenido = contenido.split("---")[-1]
+                        
+                    if "---" in contenido:
+                        contenido = contenido.split("---")[-1]
 
-                        for line in contenido.splitlines():
-                            linea = line.strip()
-                            if not linea or linea.startswith("http") or linea.startswith("/quote/"):
-                                continue
-                            texto_limpio = re.sub(r"^\[\d+\]\s*", "", linea)
-                            texto_limpio = re.sub(r"^Pág(ina)?\s*\d+:?\s*", "", texto_limpio, flags=re.IGNORECASE).strip("“\"” \n\t")
-                            if len(texto_limpio) > 10:
-                                citas_locales.append(texto_limpio)
+                    for line in contenido.splitlines():
+                        linea = line.strip()
+                        if not linea or linea.startswith("http") or linea.startswith("/quote/"):
+                            continue
+                        
+                        texto_limpio = re.sub(r"^\[\d+\]\s*", "", linea)
+                        texto_limpio = re.sub(r"^Pág(ina)?\s*\d+:?\s*", "", texto_limpio, flags=re.IGNORECASE)
+                        texto_limpio = texto_limpio.strip("“\"” \n\t")
+                        
+                        if texto_limpio and len(texto_limpio) > 10:
+                            citas_locales.append(texto_limpio)
                 except Exception as e:
                     print(f"Error leyendo archivo local {f}: {e}")
 
@@ -568,6 +559,7 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
             "URL": ""
         }
 
+    # 4. Traducir al español si el parámetro es 'es' o por defecto
     if lang == "es":
         cita_pura = traducir_nativo(cita_pura, lang="es")
 
@@ -700,7 +692,7 @@ def wrap_text(text, font, max_width, draw):
     if current: lines.append(current)
     return lines
 
-def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7):
+def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, draw_background=True):
     bg_image = Image.open(bg_path).convert("RGB")
 
     # --- ¡OPTIMIZACIÓN CRUCIAL PARA LA CPU! ---
@@ -742,7 +734,12 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
     vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
 
-    draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
+    if draw_background:
+        small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
+        pixel = small.getpixel((0, 0))
+        r, g, b = pixel[0], pixel[1], pixel[2]
+        draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
+
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
 
@@ -871,6 +868,7 @@ class PreviewDialog(Gtk.Dialog):
         self.offset_y = 0
         self.width_ratio = 0.7
         self.align_mode = "center"
+        self.draw_background = True
         self.cita_data = {"Cita": "", "Autor": "", "Fecha": "", "URL": ""}
 
         if self.main_app.citas_activas:
@@ -962,6 +960,12 @@ class PreviewDialog(Gtk.Dialog):
         self.combo_align.connect("changed", self.on_align_changed)
         box_align.pack_start(self.combo_align, False, False, 0)
         top_bar.pack_start(box_align, False, False, 0)
+        
+        self.chk_bg = Gtk.CheckButton(label="𝘉𝘖𝘟𝘌𝘚")
+        self.chk_bg.set_active(True)
+        self.chk_bg.connect("toggled", self.on_toggle_fondo)
+        top_bar.pack_start(self.chk_bg, False, False, 0)
+
 
         # 5. Movimiento (4 botones en horizontal pura)
         box_pad = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
@@ -1065,6 +1069,10 @@ class PreviewDialog(Gtk.Dialog):
         self.offset_y = max(0, self.offset_y + dy)
         self.renderizar_vista_previa()
 
+    def on_toggle_fondo(self, widget):
+        self.draw_background = widget.get_active()
+        self.renderizar_vista_previa()
+
     def on_align_changed(self, combo):
         self.align_mode = combo.get_active_id()
         self.renderizar_vista_previa()
@@ -1100,24 +1108,17 @@ class PreviewDialog(Gtk.Dialog):
         if not self.hd_image_path.exists():
             return False
         try:
-            # Si está cargando, pasamos cadenas vacías para que la imagen se vea limpia sin textos extraños
-            if getattr(self, "cargando_cita", False):
-                texto_cita = ""
-                texto_autor = ""
-            else:
-                texto_cita = self.cita_data.get("Cita", "") if self.main_app.citas_activas else ""
-                texto_autor = self.cita_data.get("Autor", "") if self.main_app.citas_activas else ""
-
             comp = generate_composite_image(
                 str(self.hd_image_path),
-                texto_cita,
-                texto_autor,
+                self.cita_data.get("Cita", "") if self.main_app.citas_activas else "",
+                self.cita_data.get("Autor", "") if self.main_app.citas_activas else "",
                 font_path=self.font_path,
                 font_size=self.font_size,
                 offset_x=self.offset_x,
                 offset_y=self.offset_y,
                 align_mode=self.align_mode,
                 width_ratio=self.width_ratio,
+                draw_background=self.draw_background
             )
             preview_path = TEMP_DIR / "preview_current.jpg"
             comp.save(preview_path, quality=90)
@@ -1134,23 +1135,12 @@ class PreviewDialog(Gtk.Dialog):
         return False
 
     def on_cambiar_cita(self, widget):
-        # Activamos el indicador de carga sin ensuciar el diccionario de la cita con textos feos
-        self.cargando_cita = True
+        self.cita_data = obtener_cita_datos(
+            self.main_app.autor_seleccionado,
+            self.main_app.idioma_actual,
+            self.autor_otro_actual,
+        )
         self.renderizar_vista_previa()
-
-        def worker_cambiar_cita():
-            try:
-                self.cita_data = obtener_cita_datos(
-                    self.main_app.autor_seleccionado,
-                    self.main_app.idioma_actual,
-                    self.autor_otro_actual,
-                )
-            finally:
-                self.cargando_cita = False
-                GLib.idle_add(self.renderizar_vista_previa)
-
-        threading.Thread(target=worker_cambiar_cita, daemon=True).start()
-
 
     def on_cambiar_imagen(self, widget):
         if self.main_app.imagenes_cache:
@@ -1239,6 +1229,7 @@ class PreviewDialog(Gtk.Dialog):
                 offset_y=self.offset_y,
                 align_mode=self.align_mode,
                 width_ratio=self.width_ratio,
+                draw_background=self.draw_background
             )
             filename = f"quote_{self.item_data.get('id', 'imagen')}.jpg"
             save_path = SAVE_DIR / filename
@@ -1291,7 +1282,7 @@ class PreviewDialog(Gtk.Dialog):
                 offset_x=self.offset_x,
                 offset_y=self.offset_y,
                 align_mode=self.align_mode,
-                width_ratio=self.width_ratio,
+                width_ratio=self.width_ratio
             )
             filename = f"quote_{self.item_data.get('id', 'imagen')}.jpg"
             save_path = SAVE_DIR / filename
@@ -1529,7 +1520,7 @@ class WallpaperManagerWindow(Gtk.Window):
         if widget.get_active():
             self.autor_seleccionado = autor_id
             if autor_id == "siva":
-                tag = "Borobudur Temple"
+                tag = IMAGE_STYLES["Borobudur Temple"]
                 if tag in self.chk_estilos:
                     self.chk_estilos[tag].set_active(True)
 
@@ -1825,72 +1816,64 @@ class WallpaperManagerWindow(Gtk.Window):
 
     
     def actualizar_grid_miniaturas(self, items):
-        self.imagenes_cache = items
-        self.lbl_status.set_text(f"{len(items)} miniaturas listas.")
-
-        for item in items:
-            try:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(item["thumb_path"], 170, 110, True)
-                img = Gtk.Image.new_from_pixbuf(pixbuf)
-                box = Gtk.EventBox()
-                box.add(img)
-                box.item_data = item
-                self.flowbox.add(box)
-            except Exception as e:
-                print(f"Error cargando miniatura {item['thumb_path']}: {e}")
-                # Si el archivo está corrupto, lo elimina para que la próxima lo descargue bien
+            self.imagenes_cache = items
+            self.lbl_status.set_text(f"{len(items)} miniaturas listas.")
+    
+            for item in items:
                 try:
-                    if os.path.exists(item["thumb_path"]):
-                        os.remove(item["thumb_path"])
-                except Exception:
-                    pass
-                continue
-
-        self.flowbox.show_all()
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(item["thumb_path"], 170, 110, True)
+                    img = Gtk.Image.new_from_pixbuf(pixbuf)
+                    box = Gtk.EventBox()
+                    box.add(img)
+                    box.item_data = item
+                    self.flowbox.add(box)
+                except Exception as e:
+                    print(f"Error cargando miniatura {item['thumb_path']}: {e}")
+                    # Si el archivo está corrupto, lo elimina para que la próxima lo descargue bien
+                    try:
+                        if os.path.exists(item["thumb_path"]):
+                            os.remove(item["thumb_path"])
+                    except Exception:
+                        pass
+                    continue
+    
+            self.flowbox.show_all()
 
     def on_imagen_doble_click(self, flowbox, child):
         item_data = getattr(child.get_child(), "item_data", None)
         if not item_data:
             return
+    
+        autor_otro_override = ""
+        if self.citas_activas and self.autor_seleccionado == "otros":
+            # Buscar el script externo en las rutas permitidas
+            script_author_dialog = IMAGENES_QUOTES_DIR / "author_dialog.py"
+            if not script_author_dialog.exists():
+                script_author_dialog = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/author_dialog.py")
+    
+            if script_author_dialog.exists():
+                try:
+                    res = subprocess.run(
+                        [sys.executable, str(script_author_dialog)],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    if res.returncode == 0 and res.stdout.strip():
+                        # --- FILTRO APLICADO AQUÍ ---
+                        # Nos quedamos con la última línea que no esté vacía (el nombre real del autor)
+                        lineas = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
+                        if lineas:
+                            autor_otro_override = lineas[-1]
+                except Exception as e:
+                    print(f"Error ejecutando author_dialog.py: {e}")
+    
+            if not autor_otro_override:
+                return  # Si canceló o no devolvió nada, se cancela la vista previa
 
-        def tarea_segundo_plano():
-            autor_otro_override = ""
-            if self.citas_activas and self.autor_seleccionado == "otros":
-                GLib.idle_add(self.lbl_status.set_text, "Esperando selección de autor...")
-                
-                script_author_dialog = IMAGENES_QUOTES_DIR / "author_dialog.py"
-                if not script_author_dialog.exists():
-                    script_author_dialog = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/author_dialog.py")
-
-                if script_author_dialog.exists():
-                    try:
-                        res = subprocess.run(
-                            [sys.executable, str(script_author_dialog)],
-                            capture_output=True,
-                            text=True,
-                            timeout=60
-                        )
-                        if res.returncode == 0 and res.stdout.strip():
-                            lineas = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
-                            if lineas:
-                                autor_otro_override = lineas[-1]
-                    except Exception as e:
-                        print(f"Error ejecutando author_dialog.py: {e}")
-
-                if not autor_otro_override:
-                    GLib.idle_add(self.lbl_status.set_text, "Búsqueda de autor cancelada.")
-                    return
-
-            def abrir_preview():
-                self.lbl_status.set_text("Listo.")
-                dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
-                dialog.run()
-                dialog.destroy()
-                return False
-
-            GLib.idle_add(abrir_preview)
-
-        threading.Thread(target=tarea_segundo_plano, daemon=True).start()
+        dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
+        dialog.run()
+        dialog.destroy()
 
 
     def on_close_window(self, widget, event):
