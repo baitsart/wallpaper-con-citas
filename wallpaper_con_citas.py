@@ -15,12 +15,12 @@ import urllib.request
 import urllib.error
 import threading
 from pathlib import Path
-
+from datetime import datetime
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ExifTags
 
 # ----------------------------------------------------------------------
 # CONFIGURACIÓN Y RUTAS DE ALMACENAMIENTO UNIVERSALES ($HOME)
@@ -625,7 +625,7 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
             "Cita": cita_sel,
             "Autor": "Dr. Siva P.",
             "Fecha": "PVH",
-            "URL": "",
+            "URL": SIVA_METADATA_URLS,
         }
 
     elif autor_id == "ravi_shankar":
@@ -692,7 +692,8 @@ def wrap_text(text, font, max_width, draw):
     if current: lines.append(current)
     return lines
 
-def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, draw_background=True):
+def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, draw_background=True, cita_data=None, item_data=None
+):
     bg_image = Image.open(bg_path).convert("RGB")
 
     # --- ¡OPTIMIZACIÓN CRUCIAL PARA LA CPU! ---
@@ -777,7 +778,27 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
         draw.text((text_x + 2, text_y + 2), author_line, font=font, fill=(0, 0, 0, 180))
         draw.text((text_x, text_y), author_line, font=font, fill=(255, 255, 255, 255))
 
-    return result.convert("RGB")
+    img_final = result.convert("RGB")
+    
+    # Preparar el texto completo de metadatos
+    cita_info = cita_data or {}
+    item_info = item_data or {}
+
+    metadata_texto = (
+        f"Cita: {quote_text}\n"
+        f"Autor: {author_text}\n"
+        f"Fuente/Fecha: {cita_info.get('Fecha', 'N/A')}\n"
+        f"URL Cita: {cita_info.get('URL', 'N/A')}\n"
+        f"ID Imagen: {item_info.get('id', 'N/A')}\n"
+        f"URL Imagen: {item_info.get('source_url', 'N/A')}"
+    )
+
+    exif = img_final.getexif()
+    # Tag Exif 270: ImageDescription (Descripción de la imagen)
+    exif[270] = metadata_texto
+
+    img_final.info["exif"] = exif.tobytes()
+    return img_final
 
 # ----------------------------------------------------------------------
 # DIÁLOGOS Y VENTANAS GTK
@@ -1118,7 +1139,9 @@ class PreviewDialog(Gtk.Dialog):
                 offset_y=self.offset_y,
                 align_mode=self.align_mode,
                 width_ratio=self.width_ratio,
-                draw_background=self.draw_background
+                draw_background=self.draw_background,
+                cita_data=self.cita_data,
+                item_data=self.item_data                
             )
             preview_path = TEMP_DIR / "preview_current.jpg"
             comp.save(preview_path, quality=90)
@@ -1229,11 +1252,17 @@ class PreviewDialog(Gtk.Dialog):
                 offset_y=self.offset_y,
                 align_mode=self.align_mode,
                 width_ratio=self.width_ratio,
-                draw_background=self.draw_background
+                draw_background=self.draw_background,
+                cita_data=self.cita_data,
+                item_data=self.item_data
             )
-            filename = f"quote_{self.item_data.get('id', 'imagen')}.jpg"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"quote_{self.item_data.get('id', 'imagen')}_{timestamp}.jpg"
             save_path = SAVE_DIR / filename
-            comp.save(save_path, quality=100)
+            if "exif" in comp.info:
+                comp.save(save_path, quality=100, exif=comp.info["exif"])
+            else:
+                comp.save(save_path, quality=100)
 
             cmd_history = "sh /usr/share/wallpaper_manager/w_m/actions/ir-prev.sh"
             subprocess.Popen(cmd_history, shell=True)
@@ -1282,11 +1311,19 @@ class PreviewDialog(Gtk.Dialog):
                 offset_x=self.offset_x,
                 offset_y=self.offset_y,
                 align_mode=self.align_mode,
-                width_ratio=self.width_ratio
+                width_ratio=self.width_ratio,
+                draw_background=self.draw_background,
+                cita_data=self.cita_data,
+                item_data=self.item_data
             )
-            filename = f"quote_{self.item_data.get('id', 'imagen')}.jpg"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"quote_{self.item_data.get('id', 'imagen')}_{timestamp}.jpg"
             save_path = SAVE_DIR / filename
-            comp.save(save_path, quality=100)
+            if "exif" in comp.info:
+                comp.save(save_path, quality=100, exif=comp.info["exif"])
+            else:
+                comp.save(save_path, quality=100)            
+
             self.mostrar_mensaje("¡Imagen Guardada!", f"Guardada con éxito en:\n{save_path}")
         except Exception as e:
             self.mostrar_mensaje("Error", str(e), Gtk.MessageType.ERROR)
@@ -1520,9 +1557,10 @@ class WallpaperManagerWindow(Gtk.Window):
         if widget.get_active():
             self.autor_seleccionado = autor_id
             if autor_id == "siva":
-                tag = IMAGE_STYLES["Borobudur Temple"]
-                if tag in self.chk_estilos:
-                    self.chk_estilos[tag].set_active(True)
+                tag_data = IMAGE_STYLES.get("Borobudur Temple", {})
+                query_tag = tag_data.get("query")
+                if query_tag and query_tag in self.chk_estilos:
+                    self.chk_estilos[query_tag].set_active(True)
 
     def obtener_imagenes_pixabay(self, query_tag, cantidad=5):
         items = []
