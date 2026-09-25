@@ -1,4 +1,5 @@
-wallpaper-con-citas (1.0.6) resolute; urgency=medium
+wallpaper-con-citas (1.0.7) resolute; urgency=medium
+  * It was necessary to correct an error related to \"Other authors.\" It only displays the following: No citations found. /Final revision.
   * Latest fixes; Added writing "metadata" to image. Changed so that it does not overwrite if the quote is changed. And it was fixed at the Quote Edition in the image, more stable.
   * Add a transparent option to text background.
   * Fix a bug on "Other authors" download quotes method.

@@ -162,9 +162,9 @@ def guardar_tags_activos(tags_config):
 def buscar_script(nombre_script):
     """
     Busca el script ejecutable (.py) probando en:
-    1. ~/.wallpaper_manager/
-    2. ~/.wallpaper_manager/Buenas imágenes con citas/
-    3. ~/.wallpaper_manager/Buenas imágenes con citas/Quotes/
+    1. /usr/share/wallpaper_manager/
+    2. /usr/share/wallpaper_manager/Buenas_imágenes_citas/
+    3. /usr/share/wallpaper_manager/Buenas_imágenes_citas/Quotes/
     """
     rutas_posibles = [
         BASE_DIR / nombre_script,
@@ -411,7 +411,7 @@ def traducir_nativo(texto, lang="es"):
 
     # 1. Intentar primero con el script externo del sistema
     if lang == "es":
-        script_translate = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/auto-translate.py")
+        script_translate = Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/auto-translate.py")
         if script_translate.exists():
             try:
                 res = subprocess.run(
@@ -465,38 +465,87 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
             "URL": ""
         }
 
-    script_path = IMAGENES_QUOTES_DIR / "others_authors.py"
-    salida = ""
     url_meta = ""
+    
+    # --- BÚSQUEDA DINÁMICA ESTILO GREP EN EL JSON DE AUTORES ---
+    # --- BÚSQUEDA DINÁMICA ESTILO GREP EN EL JSON DE AUTORES ---
+    json_db_path = IMAGENES_QUOTES_DIR / "autores_completos_db.json"
+    if not json_db_path.exists():
+        json_db_path = SHARE_DIR / "Buenas_imágenes_citas" / "autores_completos_db.json"
+
+    if json_db_path.exists():
+        try:
+            with open(json_db_path, "r", encoding="utf-8") as f:
+                db_data = json.load(f)
+                
+                # Obtenemos los valores internos si es un diccionario o la lista directa
+                valores = db_data.values() if isinstance(db_data, dict) else db_data
+                
+                autor_buscado = autor_nombre.lower()
+                for entry in valores:
+                    if not isinstance(entry, dict):
+                        continue
+                    nombre_db = entry.get("nombre", "").lower()
+                    exacto_db = entry.get("exacto", "").lower()
+                    
+                    if autor_buscado in nombre_db or autor_buscado in exacto_db:
+                        rel_url = entry.get("url", "")
+                        if rel_url:
+                            if rel_url.startswith("http"):
+                                url_meta = rel_url
+                            else:
+                                url_meta = f"https://www.azquotes.com{rel_url}"
+                            break
+        except Exception as e:
+            print(f"Error leyendo autores_completos_db.json: {e}")
+
+    # Búsqueda exhaustiva del script en todas las rutas conocidas
+    posibles_rutas_script = [
+        IMAGENES_QUOTES_DIR / "others_authors.py",
+        SHARE_DIR / "Buenas_imágenes_citas" / "others_authors.py",
+        BASE_DIR / "others_authors.py"
+    ]
+    
+    script_path = None
+    for r in posibles_rutas_script:
+        if r.exists():
+            script_path = r
+            break
+
+    salida = ""
+    # NO reiniciamos url_meta aquí para conservar la del JSON si ya la tenemos
     exito_web = False
 
     # 1. Ejecutar script externo
-    if script_path.exists():
+    if script_path:
         try:
             res = subprocess.run(
                 [sys.executable, str(script_path), autor_nombre],
                 capture_output=True,
                 text=True,
-                timeout=18
+                timeout=25
             )
             salida = res.stdout.strip()
             if res.returncode == 0 and salida:
                 exito_web = True
+            else:
+                print(f"Error en others_authors.py (Code {res.returncode}): {res.stderr.strip()}")
         except subprocess.TimeoutExpired:
-            print(f"Aviso: others_authors.py tardó demasiado para {autor_nombre}. Usando respaldo local...")
+            print(f"Aviso: others_authors.py tardó demasiado para '{autor_nombre}'.")
         except Exception as e:
-            print(f"Error ejecutando others_authors.py: {e}. Usando respaldo local...")
+            print(f"Error ejecutando others_authors.py: {e}")
+    else:
+        print("Error: No se encontró el archivo 'others_authors.py' en ninguna ruta conocida.")
 
     cita_pura = ""
 
-    # 2. Filtrar SOLO el texto de la cita
+    # 2. Extraer la cita y la URL de la salida estándar
     if exito_web and salida:
         for linea in salida.splitlines():
             linea_s = linea.strip()
             if not linea_s:
                 continue
             
-            # Capturar la URL de la cita si existe
             if linea_s.startswith("http") or linea_s.startswith("/quote/"):
                 if linea_s.startswith("/quote/"):
                     url_meta = f"https://www.azquotes.com{linea_s}"
@@ -504,48 +553,44 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
                     url_meta = linea_s
                 continue
 
-            # Omitir metadatos de búsqueda e información del autor
-            if (linea_s.startswith("Buscando:") or 
-                linea_s.startswith("Página del autor:") or 
-                linea_s.startswith("—")):
-                continue
-
-            # Extraer solo el contenido de la cita suprimiendo el ID tipo [701698]
             match = re.match(r"^\[\d+\]\s*(.+)$", linea_s)
             if match:
                 cita_pura = match.group(1).strip()
             elif not cita_pura:
                 cita_pura = linea_s
 
-    # 3. Respaldo en archivos locales si falló la búsqueda web
+    # 3. Respaldo local si no se obtuvo respuesta web
     if not cita_pura:
         citas_locales = []
         partes_nombre = [p.lower() for p in autor_nombre.split() if len(p) > 2]
-        directorio_busqueda = HOME_DIR if 'HOME_DIR' in globals() and HOME_DIR.exists() else IMAGENES_QUOTES_DIR
         
-        for f in directorio_busqueda.glob("*.txt"):
-            nombre_archivo_lower = f.name.lower()
-            if any(p in nombre_archivo_lower for p in partes_nombre):
-                try:
-                    with open(f, "r", encoding="utf-8", errors="ignore") as file:
-                        contenido = file.read()
-                        
-                    if "---" in contenido:
-                        contenido = contenido.split("---")[-1]
+        directorios_busqueda = [QUOTES_DIR, IMAGENES_QUOTES_DIR, HOME_DIR]
+        for direct in directorios_busqueda:
+            if not direct.exists():
+                continue
+            for f in direct.glob("*.txt"):
+                nombre_lower = f.name.lower()
+                if any(p in nombre_lower for p in partes_nombre):
+                    try:
+                        with open(f, "r", encoding="utf-8", errors="ignore") as file:
+                            contenido = file.read()
+                            
+                        if "---" in contenido:
+                            contenido = contenido.split("---")[-1]
 
-                    for line in contenido.splitlines():
-                        linea = line.strip()
-                        if not linea or linea.startswith("http") or linea.startswith("/quote/"):
-                            continue
-                        
-                        texto_limpio = re.sub(r"^\[\d+\]\s*", "", linea)
-                        texto_limpio = re.sub(r"^Pág(ina)?\s*\d+:?\s*", "", texto_limpio, flags=re.IGNORECASE)
-                        texto_limpio = texto_limpio.strip("“\"” \n\t")
-                        
-                        if texto_limpio and len(texto_limpio) > 10:
-                            citas_locales.append(texto_limpio)
-                except Exception as e:
-                    print(f"Error leyendo archivo local {f}: {e}")
+                        for line in contenido.splitlines():
+                            linea = line.strip()
+                            if not linea or linea.startswith("http") or linea.startswith("/quote/"):
+                                continue
+                            
+                            texto_limpio = re.sub(r"^\[\d+\]\s*", "", linea)
+                            texto_limpio = re.sub(r"^Pág(ina)?\s*\d+:?\s*", "", texto_limpio, flags=re.IGNORECASE)
+                            texto_limpio = texto_limpio.strip("“\"” \n\t")
+                            
+                            if texto_limpio and len(texto_limpio) > 10:
+                                citas_locales.append(texto_limpio)
+                    except Exception as e:
+                        print(f"Error leyendo {f}: {e}")
 
         if citas_locales:
             cita_pura = random.choice(citas_locales)
@@ -559,7 +604,7 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
             "URL": ""
         }
 
-    # 4. Traducir al español si el parámetro es 'es' o por defecto
+    # 4. Traducir al español
     if lang == "es":
         cita_pura = traducir_nativo(cita_pura, lang="es")
 
@@ -1329,11 +1374,19 @@ class PreviewDialog(Gtk.Dialog):
             self.mostrar_mensaje("Error", str(e), Gtk.MessageType.ERROR)
 
     def on_copiar_cita(self, widget):
-        texto = self.cita_data.get("Cita", "")
-        autor = self.cita_data.get("Autor", "")
-        if autor:
-            texto = f"{texto}\n— {autor}"
-        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(texto, -1)
+        texto_cita = self.cita_data.get("Cita", "").strip()
+        autor = self.cita_data.get("Autor", "").strip()
+        
+        # Limpiamos guiones volantes o duplicados al final de la cita si los hubiera
+        texto_cita = texto_cita.rstrip("— -")
+        
+        # Unimos de forma limpia una sola vez
+        if autor and autor.lower() not in texto_cita.lower():
+            texto_final = f"“{texto_cita}”\n— {autor}"
+        else:
+            texto_final = f"“{texto_cita}”"
+            
+        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(texto_final, -1)
 
     def mostrar_info_metadatos(self, widget):
         texto = (
@@ -1884,12 +1937,15 @@ class WallpaperManagerWindow(Gtk.Window):
     
         autor_otro_override = ""
         if self.citas_activas and self.autor_seleccionado == "otros":
-            # Buscar el script externo en las rutas permitidas
-            script_author_dialog = IMAGENES_QUOTES_DIR / "author_dialog.py"
-            if not script_author_dialog.exists():
-                script_author_dialog = Path("/usr/share/wallpaper_manager/Buenas imágenes con citas/author_dialog.py")
-    
-            if script_author_dialog.exists():
+            rutas_dialog = [
+                IMAGENES_QUOTES_DIR / "author_dialog.py",
+                SHARE_DIR / "Buenas_imágenes_citas" / "author_dialog.py",
+                BASE_DIR / "author_dialog.py"
+            ]
+            
+            script_author_dialog = next((r for r in rutas_dialog if r.exists()), None)
+
+            if script_author_dialog:
                 try:
                     res = subprocess.run(
                         [sys.executable, str(script_author_dialog)],
@@ -1898,16 +1954,22 @@ class WallpaperManagerWindow(Gtk.Window):
                         timeout=30
                     )
                     if res.returncode == 0 and res.stdout.strip():
-                        # --- FILTRO APLICADO AQUÍ ---
-                        # Nos quedamos con la última línea que no esté vacía (el nombre real del autor)
-                        lineas = [l.strip() for l in res.stdout.strip().splitlines() if l.strip()]
-                        if lineas:
-                            autor_otro_override = lineas[-1]
+                        salida_cruda = res.stdout.strip()
+                        # Limpiamos y filtramos cualquier texto o depuración que imprima el script,
+                        # quedándonos únicamente con la última línea válida que contiene el autor seleccionado.
+                        lineas_validas = [
+                            l.strip() for l in salida_cruda.splitlines() 
+                            if l.strip() and not l.startswith("Traceback") and not l.startswith("File")
+                        ]
+                        if lineas_validas:
+                            autor_otro_override = lineas_validas[-1]
                 except Exception as e:
                     print(f"Error ejecutando author_dialog.py: {e}")
     
+            # Si el usuario cerró el diálogo sin elegir nada, asignamos un autor por defecto 
+            # en lugar de hacer un 'return' abrupto que congela o cancela la vista previa.
             if not autor_otro_override:
-                return  # Si canceló o no devolvió nada, se cancela la vista previa
+                autor_otro_override = "Nikola Tesla"
 
         dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
         dialog.run()

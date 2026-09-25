@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import json
+from pathlib import Path
 import random
 import re
 import sys
@@ -22,30 +24,79 @@ def descargar(url):
 
 
 def buscar_autor(nombre):
-    letra_inicial = re.sub(r'[^a-z]', '', nombre.lower())
+    autor_buscado = nombre.strip().lower()
+    if not autor_buscado:
+        raise RuntimeError("El nombre del autor está vacío.")
+
+    rutas_json = [
+        Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/autores_completos_db.json"),
+        Path(__file__).parent / "autores_completos_db.json"
+    ]
+    
+    palabras_buscadas = [p for p in re.split(r'\W+', autor_buscado) if len(p) > 2]
+
+    for json_path in rutas_json:
+        if json_path.exists():
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    db_data = json.load(f)
+                    
+                    valores = db_data.values() if isinstance(db_data, dict) else db_data
+                    
+                    # 1. Búsqueda exacta ("exacto" o "nombre")
+                    for entry in valores:
+                        if not isinstance(entry, dict):
+                            continue
+                        n = entry.get("nombre", "").strip().lower()
+                        e = entry.get("exacto", "").strip().lower()
+                        if autor_buscado == n or autor_buscado == e:
+                            url = entry.get("url", "")
+                            if url:
+                                if url.startswith("http"):
+                                    return url.replace(BASE_URL, "")
+                                return url
+                    
+                    # 2. Búsqueda flexible por palabras clave
+                    if palabras_buscadas:
+                        for entry in valores:
+                            if not isinstance(entry, dict):
+                                continue
+                            n = entry.get("nombre", "").strip().lower()
+                            e = entry.get("exacto", "").strip().lower()
+                            
+                            coincide = True
+                            for p in palabras_buscadas:
+                                if p not in n and p not in e:
+                                    coincide = False
+                                    break
+                            if coincide:
+                                url = entry.get("url", "")
+                                if url:
+                                    if url.startswith("http"):
+                                        return url.replace(BASE_URL, "")
+                                    return url
+            except Exception as e:
+                print(f"Aviso leyendo base de datos JSON: {e}", file=sys.stderr)
+
+    # Respaldo web si no está en el JSON
+    letra_inicial = re.sub(r'[^a-z]', '', autor_buscado)
     if not letra_inicial:
         raise RuntimeError("El nombre del autor no contiene letras válidas.")
     
     letra = letra_inicial[0]
-    palabras_buscadas = [p for p in re.split(r'\W+', nombre.lower()) if len(p) > 2]
     
-    # Recorrer páginas del abecedario
     for pagina in range(1, 20):
         url_indice = f"{BASE_URL}/quotes/authors/{letra}/{pagina}" if pagina > 1 else f"{BASE_URL}/quotes/authors/{letra}/"
-        
         try:
             html = descargar(url_indice)
         except Exception:
             break
 
-        # Aislamiento estricto: Extraer SOLO el contenido de la tabla principal
         match_tabla = re.search(r'<table[^>]*class=["\'][^"\']*\btable\b[^"\']*["\'][^>]*>(.*?)</table>', html, re.IGNORECASE | re.DOTALL)
         if not match_tabla:
             continue
 
         contenido_tabla = match_tabla.group(1)
-
-        # Extraer enlaces de autores dentro de la tabla
         enlaces = re.findall(r'href=["\'](/author/\d+-[^"\']+)["\'][^>]*>(.*?)</a>', contenido_tabla, re.IGNORECASE | re.DOTALL)
         
         if not enlaces:
@@ -55,11 +106,8 @@ def buscar_autor(nombre):
             nombre_encontrado = re.sub(r'<[^>]+>', '', texto_html).strip().lower()
             nombre_encontrado_limpio = " ".join(nombre_encontrado.split())
             
-            # Verificar si las palabras clave principales están en el nombre encontrado
-            # Permite tolerar errores como "Gandi" -> "Gandhi"
             coincide = True
             for p in palabras_buscadas:
-                # Comprobación flexible (subcadena de al menos 4 caracteres si la palabra es larga)
                 raiz = p[:4] if len(p) >= 4 else p
                 if raiz not in nombre_encontrado_limpio:
                     coincide = False
@@ -67,16 +115,6 @@ def buscar_autor(nombre):
             
             if coincide:
                 return url_relativa
-
-    # Intento directo de slug si falla el índice (ej: mahatma_gandhi)
-    slug = re.sub(r'[^a-z0-9]+', '_', nombre.lower()).strip('_')
-    try:
-        html_directo = descargar(f"{BASE_URL}/author/{slug}")
-        match_canonical = re.search(r'href=["\'](/author/\d+-[^"\']+)["\']', html_directo, re.IGNORECASE)
-        if match_canonical:
-            return match_canonical.group(1)
-    except Exception:
-        pass
 
     raise RuntimeError(f"No se encontró el autor: {nombre}")
 
@@ -90,6 +128,13 @@ def obtener_citas(url_autor):
         re.IGNORECASE,
     )
 
+    if not urls:
+        urls = re.findall(
+            r'href=["\'](/quote/\d+-[^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+
     urls = list(dict.fromkeys(urls))
 
     if not urls:
@@ -101,7 +146,6 @@ def obtener_citas(url_autor):
 def limpiar_texto(texto):
     if not texto:
         return ""
-    
     texto = unescape(texto)
     texto = " ".join(texto.split())
     texto = re.sub(r'^[“"\'\s]+|[”"\'\s]+$', '', texto)
@@ -118,7 +162,6 @@ def obtener_cita(url):
     ]
 
     texto = None
-
     for patron in patrones:
         match = re.search(patron, html, re.IGNORECASE | re.DOTALL)
         if match:
