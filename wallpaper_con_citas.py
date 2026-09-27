@@ -629,15 +629,65 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
         return ejecutar_y_parsear_script(script_sadhguru, lang)
 
     elif autor_id == "prem_rawat":
-        script_prem = buscar_script("prem_rawat_quotes.py")
-        if not script_prem:
-            return {
-                "Cita": "No se encontró prem_rawat_quotes.py",
-                "Autor": "Prem Rawat",
-                "Fecha": "",
-                "URL": "",
-            }
-        return ejecutar_y_parsear_script(script_prem, lang)
+        # Buscar el archivo banco.json en las rutas habituales del sistema o directorio local
+        json_banco_paths = [
+            IMAGENES_QUOTES_DIR / "banco.json",
+            SHARE_DIR / "Buenas_imágenes_citas" / "banco.json",
+            Path("banco.json"),
+            Path.home() / "banco.json"
+        ]
+        
+        banco_path = next((p for p in json_banco_paths if p.exists()), None)
+        
+        cita_elegida = ""
+        url_elegida = "https://timelesstoday.tv/es"
+        titulo_evento = ""
+        
+        if banco_path:
+            try:
+                with open(banco_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if data and isinstance(data, list):
+                        item = random.choice(data)
+                        raw_cita = item.get("cita", "")
+                        
+                        texto = str(raw_cita).strip()
+                        
+                        # 1. Quitar la firma "Prem Rawat" si viene al final del texto de la cita
+                        texto = re.sub(r'[\s–\-—]*Prem\s+Rawat[.,]?\s*$', '', texto, flags=re.IGNORECASE).strip()
+                        
+                        # 2. Quitar comillas dobles/simples o angulares sobrantes en los extremos
+                        texto = re.sub(r'^[“"„”\'«»]+|[“"„”\'«»]+$', '', texto).strip()
+                        
+                        # 3. Asegurar puntuación final correcta
+                        if texto and not texto.endswith((".", "!", "?", "…")):
+                            texto += "."
+                            
+                        cita_elegida = texto
+                        titulo_evento = item.get("titulo", "").strip()
+                        url_elegida = item.get("url") or "https://timelesstoday.tv/es"
+            except Exception as e:
+                print(f"Error leyendo banco.json para Prem Rawat: {e}")
+                
+        # Respaldo por si el archivo no existe o falló la lectura
+        if not cita_elegida:
+            cita_elegida = "La paz es la constante dentro de ti, no el evento que ocurre a tu alrededor."
+            
+        # Construir autor con el título del evento si existe
+        autor_str = "Prem Rawat"
+        if titulo_evento:
+            autor_str += f", ({titulo_evento})"
+            
+        # Traducir si se requiere en inglés
+        if lang == "en":
+            cita_elegida = traducir_texto(cita_elegida, target_lang="en", source_lang="auto")
+
+        return {
+            "Cita": cita_elegida,
+            "Autor": autor_str,
+            "Fecha": "Timeless Today" if url_elegida else "Archivo Local",
+            "URL": url_elegida,
+        }
 
     elif autor_id == "siva":
         archivos_siva = [
@@ -676,19 +726,49 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
     elif autor_id == "ravi_shankar":
         # Priorizar el archivo correspondiente al idioma seleccionado
         if lang == "en":
-            citas = obtener_cita_desde_txt(["Sri Sri Ravi Shankar quotes.txt"], patron_fallback="ravi shankar")
-            if not citas:
-                citas = obtener_cita_desde_txt(["Citas de Sri Sri Ravi Shankar.txt"], patron_fallback="ravi shankar")
+            archivos = ["Sri Sri Ravi Shankar quotes.txt", "Citas de Sri Sri Ravi Shankar.txt"]
         else:
-            citas = obtener_cita_desde_txt(["Citas de Sri Sri Ravi Shankar.txt"], patron_fallback="ravi shankar")
-            if not citas:
-                citas = obtener_cita_desde_txt(["Sri Sri Ravi Shankar quotes.txt"], patron_fallback="ravi shankar")
+            archivos = ["Citas de Sri Sri Ravi Shankar.txt", "Sri Sri Ravi Shankar quotes.txt"]
 
-        cita_sel = (
-            random.choice(citas)
-            if citas
-            else "La sonrisa es la verdadera riqueza del alma."
-        )
+        cita_sel = "La sonrisa es la verdadera riqueza del alma."
+        url_meta = ""
+        encontrado = False
+
+        directorios_a_buscar = [QUOTES_DIR, IMAGENES_QUOTES_DIR, HOME_DIR]
+        
+        for nombre_archivo in archivos:
+            if encontrado:
+                break
+            for direct in directorios_a_buscar:
+                f_path = direct / nombre_archivo
+                if f_path.exists():
+                    try:
+                        with open(f_path, "r", encoding="utf-8", errors="ignore") as f:
+                            lineas = [l.strip() for l in f.readlines() if l.strip()]
+                        
+                        # Buscar pares de (cita, /quote/ID)
+                        pares = []
+                        i = 0
+                        while i < len(lineas) - 1:
+                            l1 = lineas[i]
+                            l2 = lineas[i+1]
+                            if l1.startswith("[") and l2.startswith("/quote/"):
+                                pares.append((l1, l2))
+                                i += 2
+                            else:
+                                i += 1
+                        
+                        if pares:
+                            linea_cita, linea_url = random.choice(pares)
+                            # Limpiar ID de la cita
+                            match = re.match(r"^\[\d+\]\s*(.+)$", linea_cita)
+                            cita_sel = match.group(1).strip() if match else linea_cita
+                            # Construir URL directa tal como indicaste
+                            url_meta = f"https://www.azquotes.com{linea_url}"
+                            encontrado = True
+                            break
+                    except Exception as e:
+                        print(f"Error leyendo {f_path}: {e}")
 
         # Traducir según corresponda permitiendo auto-detección del origen
         if lang == "en":
@@ -699,8 +779,8 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
         return {
             "Cita": cita_sel,
             "Autor": "Sri Sri Ravi Shankar",
-            "Fecha": "",
-            "URL": "",
+            "Fecha": "AZ Quotes" if url_meta else "Archivo Local",
+            "URL": url_meta,
         }
 
     elif autor_id == "otros":
@@ -1221,7 +1301,10 @@ class PreviewDialog(Gtk.Dialog):
             title="Seleccionar una Imagen Local",
             parent=self,
             action=Gtk.FileChooserAction.OPEN,
-            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.ACCEPT),
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, 
+            Gtk.STOCK_OPEN, Gtk.ResponseType.ACCEPT
         )
         filter_img = Gtk.FileFilter()
         filter_img.set_name("Imágenes")
@@ -1615,44 +1698,6 @@ class WallpaperManagerWindow(Gtk.Window):
                 if query_tag and query_tag in self.chk_estilos:
                     self.chk_estilos[query_tag].set_active(True)
 
-    def obtener_imagenes_pixabay(self, query_tag, cantidad=5):
-        items = []
-        try:
-            params = {
-                "key": PIXABAY_API_KEY,
-                "q": urllib.parse.quote(query_tag),
-                "image_type": "photo",
-                "safesearch": "true",
-                "per_page": 20
-            }
-            query_str = urllib.parse.urlencode(params)
-            api_url = f"https://pixabay.com/api/?{query_str}"
-            req = urllib.request.Request(api_url, headers=HTTP_HEADERS)
-            
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    hits = data.get("hits", [])
-                    random.shuffle(hits)
-                    
-                    for hit in hits[:cantidad]:
-                        img_id = f"pixabay_{hit['id']}"
-                        thumb_url = hit.get("previewURL")
-                        full_url = hit.get("largeImageURL") or hit.get("webformatURL")
-                        
-                        thumb_path = TEMP_DIR / f"thumb_{img_id}.jpg"
-                        if not thumb_path.exists() and thumb_url:
-                            descargar_archivo(thumb_url, thumb_path)
-                            
-                        items.append({
-                            "id": img_id,
-                            "thumb_path": str(thumb_path),
-                            "full_url": full_url,
-                            "source_url": hit.get("pageURL", full_url)
-                        })
-        except Exception as e:
-            print(f"Error consultando Pixabay para '{query_tag}': {e}")
-        return items
 
     def obtener_imagenes_pixabay(self, query_tag, cantidad=25):
         items = []
@@ -1673,7 +1718,7 @@ class WallpaperManagerWindow(Gtk.Window):
                     data = json.loads(resp.read().decode("utf-8"))
                     hits = data.get("hits", [])
                     # Filtrar estrictamente no verticales (ancho >= alto)
-                    hits = [h for h in hits if h.get("imageWidth", 0) >= h.get("imageHeight", 0)]
+                    #hits = [h for h in hits if h.get("imageWidth", 0) >= h.get("imageHeight", 0)]
                     random.shuffle(hits)
                     
                     for hit in hits[:cantidad]:
