@@ -1,4 +1,6 @@
-wallpaper-con-citas (1.0.8) resolute; urgency=medium
+wallpaper-con-citas (1.0.9) resolute; urgency=medium
+  * Bug fixes: If the quote is disabled, do not display the empty text box; instead, it should remain empty unless "Edit text" is selected. Allow closing the image editing window with Ctrl+W, and the main window with Ctrl+Q. Refine the code so that the Prem quote output includes the event venue name, if mentioned.
+
   * The Prem quotes might be getting blocked due to too many requests. We are now loading them locally from the `banco.json` file. And minor code refinements.
   * It was necessary to correct an error related to \"Other authors.\" It only displays the following: No citations found. /Final revision.
   * Latest fixes; Added writing "metadata" to image. Changed so that it does not overwrite if the quote is changed. And it was fixed at the Quote Edition in the image, more stable.

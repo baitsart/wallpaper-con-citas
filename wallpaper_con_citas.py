@@ -47,7 +47,7 @@ IMAGENES_QUOTES_DIR.mkdir(parents=True, exist_ok=True)
 QUOTES_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
+TEXT_SHADOW = True  
 
 def cargar_config_idioma():
     if CONFIG_LANG_FILE.exists():
@@ -626,10 +626,20 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
                 "Fecha": "",
                 "URL": "",
             }
-        return ejecutar_y_parsear_script(script_sadhguru, lang)
+        
+        # 1. Primero ejecutamos y guardamos en una variable
+        resultado = ejecutar_y_parsear_script(script_sadhguru, lang)
+        
+        # 2. Modificamos el diccionario usando esa variable
+        fecha_str = resultado.get("Fecha", "").strip()
+        if fecha_str:
+            resultado["URL"] = f"https://isha.sadhguru.org/{lang}/wisdom/quotes/date/{fecha_str}"
+            resultado["Fecha"] = f"Isha Sadhguru ({fecha_str})"
+            
+        # 3. Ahora sí devolvemos el resultado modificado
+        return resultado
 
     elif autor_id == "prem_rawat":
-        # Buscar el archivo banco.json en las rutas habituales del sistema o directorio local
         json_banco_paths = [
             IMAGENES_QUOTES_DIR / "banco.json",
             SHARE_DIR / "Buenas_imágenes_citas" / "banco.json",
@@ -642,6 +652,7 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
         cita_elegida = ""
         url_elegida = "https://timelesstoday.tv/es"
         titulo_evento = ""
+        cadena_extraida = ""
         
         if banco_path:
             try:
@@ -650,35 +661,55 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
                     if data and isinstance(data, list):
                         item = random.choice(data)
                         raw_cita = item.get("cita", "")
-                        
                         texto = str(raw_cita).strip()
                         
-                        # 1. Quitar la firma "Prem Rawat" si viene al final del texto de la cita
-                        texto = re.sub(r'[\s–\-—]*Prem\s+Rawat[.,]?\s*$', '', texto, flags=re.IGNORECASE).strip()
+                        titulo_evento = item.get("titulo", "").strip()
                         
-                        # 2. Quitar comillas dobles/simples o angulares sobrantes en los extremos
-                        texto = re.sub(r'^[“"„”\'«»]+|[“"„”\'«»]+$', '', texto).strip()
+                        # 1. Buscar y separar la firma al final
+                        match_firma = re.search(r'([“"„”\'«»]*)\s*Prem\s+Rawat\s*[,–\-—]?\s*(.+)$', texto, flags=re.IGNORECASE)
                         
-                        # 3. Asegurar puntuación final correcta
-                        if texto and not texto.endswith((".", "!", "?", "…")):
+                        if match_firma:
+                            texto = texto[:match_firma.start()].strip()
+                            cadena_extraida = match_firma.group(2).strip()
+                            cadena_extraida = re.sub(r'[.\s]+$', '', cadena_extraida).strip()
+                        else:
+                            texto = re.sub(r'[\s–\-—]*[“"„”\'«»]*\s*Prem\s+Rawat.*$', '', texto, flags=re.IGNORECASE).strip()
+                        
+                        # 2. Limpieza de coletas colgantes (guiones, comillas sueltas, puntos repetidos al final)
+                        texto = re.sub(r'[\s–\-—"“”\'\\.]+$', '', texto).strip()
+                        
+                        # 3. Quitar comillas de apertura redundantes en el inicio
+                        texto = re.sub(r'^[“"„”\'«»]+', '', texto).strip()
+                        
+                        # 4. Asegurar rigurosamente el punto final y limpiar cualquier coma previa al cierre
+                        if texto.endswith(","):
+                            texto = texto[:-1] + "."
+                        elif texto and not texto.endswith((".", "!", "?", "…")):
                             texto += "."
                             
-                        cita_elegida = texto
-                        titulo_evento = item.get("titulo", "").strip()
+                        # Forzar que el texto devuelto incluya explícitamente sus comillas envolventes limpiecitas 
+                        # para que el generador de imágenes no las aparte ni descarte el punto interior.
+                        cita_elegida = f"{texto}"
                         url_elegida = item.get("url") or "https://timelesstoday.tv/es"
             except Exception as e:
                 print(f"Error leyendo banco.json para Prem Rawat: {e}")
                 
-        # Respaldo por si el archivo no existe o falló la lectura
+        # Respaldo por defecto si el archivo falló
         if not cita_elegida:
             cita_elegida = "La paz es la constante dentro de ti, no el evento que ocurre a tu alrededor."
             
-        # Construir autor con el título del evento si existe
+        # Construir la cadena del autor combinando título y cadena extraída limpiamente
         autor_str = "Prem Rawat"
+        detalles = []
         if titulo_evento:
-            autor_str += f", ({titulo_evento})"
+            detalles.append(titulo_evento)
+        if cadena_extraida:
+            detalles.append(cadena_extraida)
             
-        # Traducir si se requiere en inglés
+        if detalles:
+            autor_str += f" ({', '.join(detalles)})"
+            
+        # Traducción si se requiere
         if lang == "en":
             cita_elegida = traducir_texto(cita_elegida, target_lang="en", source_lang="auto")
 
@@ -817,13 +848,12 @@ def wrap_text(text, font, max_width, draw):
     if current: lines.append(current)
     return lines
 
+
 def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, draw_background=True, cita_data=None, item_data=None
 ):
     bg_image = Image.open(bg_path).convert("RGB")
 
     # --- ¡OPTIMIZACIÓN CRUCIAL PARA LA CPU! ---
-    # Esto reduce la imagen gigante a un máximo de 1920x1080 de forma proporcional 
-    # antes de hacer ningún cálculo de texto o filtros. Alivia la CPU por completo.
     bg_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
     # ------------------------------------------
 
@@ -837,40 +867,57 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     draw_overlay = ImageDraw.Draw(overlay)
 
-    small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
-    pixel = small.getpixel((0, 0))
-    r, g, b = pixel[0], pixel[1], pixel[2]
-
-    box_w = int(canvas_w * width_ratio)
-    max_text_w = box_w - 40
     dummy = Image.new("RGB", (1, 1))
     draw_dummy = ImageDraw.Draw(dummy)
 
-    clean_quote = quote_text.strip("“”).")
-    lines_quote = wrap_text(f"“{clean_quote}”", font, max_text_w, draw_dummy)
+    # --- 1. RECUPERAMOS EL ANCHO USANDO EL BOTÓN (width_ratio) ---
+    box_w = int(canvas_w * width_ratio)
+    max_text_w = box_w - 40
 
-    author_line = f"— {author_text}" if author_text else ""
-    total_lines = len(lines_quote) + (1 if author_line else 0)
+    # --- 2. VERIFICACIÓN Y ENVOLTURA DE TEXTOS ---
+    if quote_text and quote_text.strip():
+        clean_quote = quote_text.strip("“”).")
 
-    bbox = draw_dummy.textbbox((0, 0), "Ag", font=font)
-    line_h = bbox[3] - bbox[1] + 8
-    box_h = (total_lines * line_h) + 40
+        if not clean_quote.endswith(('.', '!', '?')):
+            clean_quote = clean_quote + "."
 
-    margin = 20
-    hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
-    vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
+        lines_quote = wrap_text(f"“{clean_quote}”", font, max_text_w, draw_dummy)
+    else:
+        lines_quote = []
 
-    if draw_background:
-        small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
-        pixel = small.getpixel((0, 0))
-        r, g, b = pixel[0], pixel[1], pixel[2]
-        draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
+    author_line = f"— {author_text}" if author_text and author_text.strip() else ""
+    author_lines_wrapped = []
+    if author_line:
+        author_lines_wrapped = wrap_text(author_line, font, max_text_w, draw_dummy)
+
+    all_lines = lines_quote + author_lines_wrapped
+
+    # --- 3. CÁLCULO DE ALTURA Y POSICIÓN DE LA CAJA ---
+    if all_lines:
+        bbox = draw_dummy.textbbox((0, 0), "Ag", font=font)
+        line_h = bbox[3] - bbox[1] + 8
+        
+        # Sumamos todas las líneas reales para que la caja no corte al autor por abajo
+        total_lines_count = len(lines_quote) + len(author_lines_wrapped)
+        box_h = (total_lines_count * line_h) + 50
+
+        margin = 20
+        hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
+        vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
+
+        if draw_background:
+            small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
+            pixel = small.getpixel((0, 0))
+            r, g, b = pixel[0], pixel[1], pixel[2]
+            draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
+    else:
+        hpos, vpos, box_h, line_h = 0, 0, 0, 0
 
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
 
-    text_y = vpos + 20
 
+    # --- 4. FUNCIÓN DE ALINEACIÓN CON EL // 2 CORREGIDO ---
     def calcular_x(line_text, align_type):
         line_box = draw.textbbox((0, 0), line_text, font=font)
         line_w = line_box[2] - line_box[0]
@@ -879,7 +926,7 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
         elif align_type == "right":
             return hpos + box_w - line_w - 20
         else:
-            return hpos + (box_w - line_w) // 2
+            return hpos + (box_w - line_w) // 2  # <-- ¡Aquí va el // 2 para equilibrar el margen derecho!
 
     if align_mode == "left":
         q_align, a_align = "left", "left"
@@ -892,20 +939,50 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     else:
         q_align, a_align = "center", "center"
 
+    text_y = vpos + 25
+    min_top_y = vpos + 20
+    if text_y < min_top_y:
+        text_y = min_top_y
+
+    # --- 5. RENDERIZADO DE LÍNEAS DE CITA ---
     for line in lines_quote:
         text_x = calcular_x(line, q_align)
-        draw.text((text_x + 2, text_y + 2), line, font=font, fill=(0, 0, 0, 180))
+        if TEXT_SHADOW:  
+            draw.text((text_x + 2, text_y + 2), line, font=font, fill=(0, 0, 0, 180))
         draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
         text_y += line_h
 
+    # --- 6. RENDERIZADO DE LA FIRMA / AUTOR ---
     if author_line:
-        text_x = calcular_x(author_line, a_align)
-        draw.text((text_x + 2, text_y + 2), author_line, font=font, fill=(0, 0, 0, 180))
-        draw.text((text_x, text_y), author_line, font=font, fill=(255, 255, 255, 255))
+        for author_l in author_lines_wrapped:
+            author_w = draw_dummy.textbbox((0, 0), author_l, font=font)[2] - draw_dummy.textbbox((0, 0), author_l, font=font)[0]
+            
+            if a_align == "right":
+                author_draw_x = hpos + box_w - author_w - 20
+            elif a_align == "left":
+                author_draw_x = hpos + 20
+            else: 
+                author_draw_x = hpos + (box_w - author_w) // 2
 
+            if TEXT_SHADOW:
+                draw.text(
+                    (int(author_draw_x + 2), int(text_y + 2)),
+                    author_l,
+                    font=font,
+                    fill=(0, 0, 0, 180),
+                )
+
+            draw.text(
+                (int(author_draw_x), int(text_y)),
+                author_l,
+                font=font,
+                fill=(255, 255, 255, 255),
+            )
+            text_y += line_h
+
+    # --- 7. PROCESAMIENTO EXIF Y RETORNO ---
     img_final = result.convert("RGB")
     
-    # Preparar el texto completo de metadatos
     cita_info = cita_data or {}
     item_info = item_data or {}
 
@@ -919,10 +996,9 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     )
 
     exif = img_final.getexif()
-    # Tag Exif 270: ImageDescription (Descripción de la imagen)
     exif[270] = metadata_texto
-
     img_final.info["exif"] = exif.tobytes()
+
     return img_final
 
 # ----------------------------------------------------------------------
@@ -1004,6 +1080,11 @@ class PreviewDialog(Gtk.Dialog):
     def __init__(self, parent, item_data, autor_otro_override=""):
         super().__init__(title="Vista Previa y Edición", transient_for=parent, flags=0)
         self.set_default_size(900, 650)
+        self.set_resizable(True)
+        self.set_deletable(True)
+        
+        # Forzar que el administrador de ventanas muestre minimizar/maximizar/cerrar
+        self.set_type_hint(Gdk.WindowTypeHint.NORMAL)
         self.main_app = parent
         self.item_data = item_data
         self.autor_otro_actual = autor_otro_override or self.main_app.autor_otro_seleccionado
@@ -1201,6 +1282,18 @@ class PreviewDialog(Gtk.Dialog):
         self.connect("size-allocate", self.on_window_resized)
         self.show_all()
         self.cargar_y_renderizar_async()
+        self.set_resizable(True)
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        
+        # En el __init__ de PreviewDialog
+        self.connect("key-press-event", self.on_preview_key_press)
+    
+    def on_preview_key_press(self, widget, event):
+        # Detecta Ctrl + W (o w mayúscula)
+        if event.state & Gdk.ModifierType.CONTROL_MASK and event.keyval in (Gdk.KEY_w, Gdk.KEY_W):
+            self.destroy()
+            return True
+        return False
 
     def on_window_resized(self, widget, allocation):
         # Re-renderiza de forma óptima al cambiar el tamaño de ventana
@@ -1354,6 +1447,9 @@ class PreviewDialog(Gtk.Dialog):
             start, end = buffer.get_bounds()
             self.cita_data["Cita"] = buffer.get_text(start, end, True).strip()
             self.cita_data["Autor"] = author_entry.get_text().strip()
+            if self.cita_data["Cita"]:
+                self.main_app.citas_activas = True
+
             self.renderizar_vista_previa()
         dialog.destroy()
 
@@ -1481,6 +1577,9 @@ class PreviewDialog(Gtk.Dialog):
             f"• URL Imagen: {self.item_data.get('source_url', 'N/A')}"
         )
         self.mostrar_mensaje("Metadatos de la Imagen y Cita", texto)
+        
+        info_window.connect("focus-out-event", lambda w, event: w.destroy())
+
 
 class WallpaperManagerWindow(Gtk.Window):
     def __init__(self):
@@ -1541,6 +1640,21 @@ class WallpaperManagerWindow(Gtk.Window):
 
         main_box.pack_start(bottom_bar, False, False, 0)
         self.cargar_imagenes_async()
+        
+        # En la inicialización de tu ventana principal
+        self.connect("key-press-event", self.on_main_key_press)
+        self.connect("delete-event", self.on_delete_event)
+
+
+    def on_delete_event(self, widget, event):
+            return False
+
+    def on_main_key_press(self, widget, event):
+        # Detecta Ctrl + Q
+        if event.state & Gdk.ModifierType.CONTROL_MASK and event.keyval in (Gdk.KEY_q, Gdk.KEY_Q):
+            self.close()  # Esto simula el cierre de la ventana y activa el control de la casilla
+            return True
+        return False
 
     def crear_panel_superior(self):
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
