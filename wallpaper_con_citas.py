@@ -17,6 +17,7 @@ import threading
 from pathlib import Path
 from datetime import datetime
 import gi
+import gc
 gi.require_version('Gtk', '3.0')
 gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
@@ -458,44 +459,32 @@ def traducir_nativo(texto, lang="es"):
 def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     autor_nombre = autor_nombre.strip() if autor_nombre else ""
     if not autor_nombre:
-        return {
-            "Cita": "Por favor escribe un autor en el buscador.",
-            "Autor": "",
-            "Fecha": "",
-            "URL": ""
-        }
+        return {"Cita": "Por favor escribe un autor.", "Autor": "", "Fecha": "", "URL": ""}
 
     url_meta = ""
-    
-    # --- BÚSQUEDA DINÁMICA ESTILO GREP EN EL JSON DE AUTORES ---
-    # --- BÚSQUEDA DINÁMICA ESTILO GREP EN EL JSON DE AUTORES ---
     json_db_path = IMAGENES_QUOTES_DIR / "autores_completos_db.json"
     if not json_db_path.exists():
         json_db_path = SHARE_DIR / "Buenas_imágenes_citas" / "autores_completos_db.json"
 
+    # Búsqueda optimizada de memoria
     if json_db_path.exists():
         try:
             with open(json_db_path, "r", encoding="utf-8") as f:
                 db_data = json.load(f)
-                
-                # Obtenemos los valores internos si es un diccionario o la lista directa
                 valores = db_data.values() if isinstance(db_data, dict) else db_data
-                
                 autor_buscado = autor_nombre.lower()
+
                 for entry in valores:
                     if not isinstance(entry, dict):
                         continue
-                    nombre_db = entry.get("nombre", "").lower()
-                    exacto_db = entry.get("exacto", "").lower()
-                    
-                    if autor_buscado in nombre_db or autor_buscado in exacto_db:
+                    if autor_buscado in entry.get("nombre", "").lower() or autor_buscado in entry.get("exacto", "").lower():
                         rel_url = entry.get("url", "")
                         if rel_url:
-                            if rel_url.startswith("http"):
-                                url_meta = rel_url
-                            else:
-                                url_meta = f"https://www.azquotes.com{rel_url}"
-                            break
+                            url_meta = rel_url if rel_url.startswith("http") else f"https://www.azquotes.com{rel_url}"
+                        break
+                # Liberar explícitamente la estructura pesada de RAM
+                del db_data
+                del valores
         except Exception as e:
             print(f"Error leyendo autores_completos_db.json: {e}")
 
@@ -1260,7 +1249,7 @@ class PreviewDialog(Gtk.Dialog):
         action_bar_2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         action_bar_2.set_halign(Gtk.Align.CENTER)
 
-        btn_dl_raw = Gtk.Button(label="📥 Solo Imagen Libre")
+        btn_dl_raw = Gtk.Button(label="📥 Solo Imagen")
         btn_dl_raw.connect("clicked", self.on_descargar_solo_imagen)
         action_bar_2.pack_start(btn_dl_raw, False, False, 0)
 
@@ -1344,36 +1333,45 @@ class PreviewDialog(Gtk.Dialog):
         threading.Thread(target=worker, daemon=True).start()
 
     def renderizar_vista_previa(self):
-        if not self.hd_image_path.exists():
+            if not self.hd_image_path.exists():
+                return False
+            
+            comp = None
+            pixbuf = None
+            try:
+                comp = generate_composite_image(
+                    str(self.hd_image_path),
+                    self.cita_data.get("Cita", "") if self.main_app.citas_activas else "",
+                    self.cita_data.get("Autor", "") if self.main_app.citas_activas else "",
+                    font_path=self.font_path,
+                    font_size=self.font_size,
+                    offset_x=self.offset_x,
+                    offset_y=self.offset_y,
+                    align_mode=self.align_mode,
+                    width_ratio=self.width_ratio,
+                    draw_background=self.draw_background,
+                    cita_data=self.cita_data,
+                    item_data=self.item_data               
+                )
+                preview_path = TEMP_DIR / "preview_current.jpg"
+                comp.save(preview_path, quality=90)
+    
+                # Obtener dimensiones disponibles para escalar adecuadamente la imagen
+                alloc = self.image_widget.get_allocation()
+                max_w = max(alloc.width, 700)
+                max_h = max(alloc.height, 400)
+    
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(preview_path), max_w, max_h, True)
+                self.image_widget.set_from_pixbuf(pixbuf)
+            except Exception as e:
+                print(f"Error renderizando vista previa: {e}")
+            finally:
+                # Eliminamos las referencias locales pesadas antes del gc
+                del comp
+                del pixbuf
+                gc.collect()
+    
             return False
-        try:
-            comp = generate_composite_image(
-                str(self.hd_image_path),
-                self.cita_data.get("Cita", "") if self.main_app.citas_activas else "",
-                self.cita_data.get("Autor", "") if self.main_app.citas_activas else "",
-                font_path=self.font_path,
-                font_size=self.font_size,
-                offset_x=self.offset_x,
-                offset_y=self.offset_y,
-                align_mode=self.align_mode,
-                width_ratio=self.width_ratio,
-                draw_background=self.draw_background,
-                cita_data=self.cita_data,
-                item_data=self.item_data                
-            )
-            preview_path = TEMP_DIR / "preview_current.jpg"
-            comp.save(preview_path, quality=90)
-
-            # Obtener dimensiones disponibles para escalar adecuadamente la imagen
-            alloc = self.image_widget.get_allocation()
-            max_w = max(alloc.width, 700)
-            max_h = max(alloc.height, 400)
-
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(preview_path), max_w, max_h, True)
-            self.image_widget.set_from_pixbuf(pixbuf)
-        except Exception as e:
-            print(f"Error renderizando vista previa: {e}")
-        return False
 
     def on_cambiar_cita(self, widget):
         self.cita_data = obtener_cita_datos(
@@ -1462,6 +1460,26 @@ class PreviewDialog(Gtk.Dialog):
         dialog.run()
         dialog.destroy()
 
+    def mostrar_mensaje_url(self, titulo, texto, message_type=Gtk.MessageType.INFO):
+        dialog = Gtk.MessageDialog(
+            transient_for=self, flags=0, message_type=message_type,
+            buttons=Gtk.ButtonsType.OK, text=titulo
+        )
+        
+        # Aplicar Pango Markup directamente al texto secundario
+        dialog.format_secondary_markup(texto)
+        
+        # Obtener la etiqueta secundaria y habilitar selección y enlaces
+        label_secundario = dialog.get_message_area().get_children()[1]
+        if isinstance(label_secundario, Gtk.Label):
+            label_secundario.set_selectable(True)
+            label_secundario.set_use_markup(True)
+    
+        # Mostrar todos los elementos antes de bloquear con run()
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
     def on_set_as_wallpaper(self, widget):
         if not self.hd_image_path.exists():
             return
@@ -1487,10 +1505,6 @@ class PreviewDialog(Gtk.Dialog):
                 comp.save(save_path, quality=100, exif=comp.info["exif"])
             else:
                 comp.save(save_path, quality=100)
-
-            cmd_history = "sh /usr/share/wallpaper_manager/w_m/actions/ir-prev.sh"
-            subprocess.Popen(cmd_history, shell=True)
-
             file_uri = save_path.as_uri()
             try:
                 color_scheme = subprocess.check_output(
@@ -1504,12 +1518,15 @@ class PreviewDialog(Gtk.Dialog):
             cmd_wallpaper = f'gsettings set org.gnome.desktop.background {key} "{file_uri}"'
             subprocess.Popen(cmd_wallpaper, shell=True)
 
-            self.mostrar_mensaje(
+            cmd_history = "sh /usr/share/wallpaper_manager/w_m/actions/ir-prev.sh"
+            subprocess.Popen(cmd_history, shell=True)
+
+            self.mostrar_mensaje_url(
                 "¡Fondo Aplicado!",
                 f"La imagen fue guardada y establecida como fondo de pantalla:\n{save_path}"
             )
         except Exception as e:
-            self.mostrar_mensaje("Error", str(e), Gtk.MessageType.ERROR)
+            self.mostrar_mensaje_url("Error", str(e), Gtk.MessageType.ERROR)
 
     def on_descargar_solo_imagen(self, widget):
         if not self.hd_image_path.exists():
@@ -1518,9 +1535,9 @@ class PreviewDialog(Gtk.Dialog):
         destino = SAVE_DIR / nombre
         try:
             shutil.copy2(self.hd_image_path, destino)
-            self.mostrar_mensaje("¡Imagen guardada!", f"Guardada con éxito en:\n{destino}")
+            self.mostrar_mensaje_url("¡Imagen guardada!", f"Guardada con éxito en:\n{destino}")
         except Exception as e:
-            self.mostrar_mensaje("Error", str(e), Gtk.MessageType.ERROR)
+            self.mostrar_mensaje_url("Error", str(e), Gtk.MessageType.ERROR)
 
     def on_descargar_con_cita(self, widget):
         if not self.hd_image_path.exists():
@@ -1548,9 +1565,9 @@ class PreviewDialog(Gtk.Dialog):
             else:
                 comp.save(save_path, quality=100)            
 
-            self.mostrar_mensaje("¡Imagen Guardada!", f"Guardada con éxito en:\n{save_path}")
+            self.mostrar_mensaje_url("¡Imagen Guardada!", f"Guardada con éxito en:\n{save_path}")
         except Exception as e:
-            self.mostrar_mensaje("Error", str(e), Gtk.MessageType.ERROR)
+            self.mostrar_mensaje_url("Error", str(e), Gtk.MessageType.ERROR)
 
     def on_copiar_cita(self, widget):
         texto_cita = self.cita_data.get("Cita", "").strip()
@@ -1568,17 +1585,27 @@ class PreviewDialog(Gtk.Dialog):
         Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(texto_final, -1)
 
     def mostrar_info_metadatos(self, widget):
+        # Función auxiliar para escapar texto plano pero no romper HTML
+        def esc(val):
+            return GLib.markup_escape_text(str(val)) if val else 'N/A'
+    
+        url_cita = self.cita_data.get('URL', '')
+        url_img = self.item_data.get('source_url', '')
+    
+        # Construimos los links en formato Pango Markup
+        link_cita = f'<a href="{esc(url_cita)}">{esc(url_cita)}</a>' if url_cita else 'N/A'
+        link_img = f'<a href="{esc(url_img)}">{esc(url_img)}</a>' if url_img else 'N/A'
+    
         texto = (
-            f"• Cita: {self.cita_data.get('Cita', 'N/A')}\n"
-            f"• Autor: {self.cita_data.get('Autor', 'N/A')}\n"
-            f"• Fuente/Fecha: {self.cita_data.get('Fecha', 'N/A')}\n"
-            f"• URL Cita: {self.cita_data.get('URL', 'N/A')}\n\n"
-            f"• ID Imagen: {self.item_data.get('id', 'N/A')}\n"
-            f"• URL Imagen: {self.item_data.get('source_url', 'N/A')}"
+            f"• <b>Cita:</b> {esc(self.cita_data.get('Cita', 'N/A'))}\n"
+            f"• <b>Autor:</b> {esc(self.cita_data.get('Autor', 'N/A'))}\n"
+            f"• <b>Fuente/Fecha:</b> {esc(self.cita_data.get('Fecha', 'N/A'))}\n"
+            f"• <b>URL Cita:</b> {link_cita}\n\n"
+            f"• <b>ID Imagen:</b> {esc(self.item_data.get('id', 'N/A'))}\n"
+            f"• <b>URL Imagen:</b> {link_img}"
         )
-        self.mostrar_mensaje("Metadatos de la Imagen y Cita", texto)
-        
-        info_window.connect("focus-out-event", lambda w, event: w.destroy())
+    
+        self.mostrar_mensaje_url("Metadatos de la Imagen y Cita", texto)
 
 
 class WallpaperManagerWindow(Gtk.Window):
@@ -2094,45 +2121,71 @@ class WallpaperManagerWindow(Gtk.Window):
         if not item_data:
             return
     
-        autor_otro_override = ""
-        if self.citas_activas and self.autor_seleccionado == "otros":
-            rutas_dialog = [
-                IMAGENES_QUOTES_DIR / "author_dialog.py",
-                SHARE_DIR / "Buenas_imágenes_citas" / "author_dialog.py",
-                BASE_DIR / "author_dialog.py"
-            ]
+        def tarea_abrir_preview():
+            autor_otro_override = ""
             
-            script_author_dialog = next((r for r in rutas_dialog if r.exists()), None)
+            if self.citas_activas and self.autor_seleccionado == "otros":
+                rutas_dialog = [
+                    IMAGENES_QUOTES_DIR / "author_dialog.py",
+                    SHARE_DIR / "Buenas_imágenes_citas" / "author_dialog.py",
+                    BASE_DIR / "author_dialog.py"
+                ]
+                script_author_dialog = next((r for r in rutas_dialog if r.exists()), None)
 
-            if script_author_dialog:
-                try:
-                    res = subprocess.run(
-                        [sys.executable, str(script_author_dialog)],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    if res.returncode == 0 and res.stdout.strip():
-                        salida_cruda = res.stdout.strip()
-                        # Limpiamos y filtramos cualquier texto o depuración que imprima el script,
-                        # quedándonos únicamente con la última línea válida que contiene el autor seleccionado.
-                        lineas_validas = [
-                            l.strip() for l in salida_cruda.splitlines() 
-                            if l.strip() and not l.startswith("Traceback") and not l.startswith("File")
+                if script_author_dialog:
+                    try:
+                        res = subprocess.run(
+                            [sys.executable, str(script_author_dialog)],
+                            capture_output=True,
+                            text=True,
+                            timeout=15
+                        )
+                        
+                        # CASO 1: El usuario CERRÓ o CANCELÓ la ventana (código de salida distinto de 0)
+                        if res.returncode != 0:
+                            print("Diálogo de autor cerrado o cancelado por el usuario. Abortando búsqueda.")
+                            return
+
+                        # CASO 2: Confirmó (returncode == 0), procesamos la salida
+                        lineas = [l.strip() for l in res.stdout.splitlines() if l.strip()]
+
+                        palabras_ignorar = [
+                            "cargando", "autores disponibles", "listo", 
+                            "iniciando", "base completa", "memoria"
                         ]
-                        if lineas_validas:
-                            autor_otro_override = lineas_validas[-1]
-                except Exception as e:
-                    print(f"Error ejecutando author_dialog.py: {e}")
-    
-            # Si el usuario cerró el diálogo sin elegir nada, asignamos un autor por defecto 
-            # en lugar de hacer un 'return' abrupto que congela o cancela la vista previa.
-            if not autor_otro_override:
-                autor_otro_override = "Nikola Tesla"
 
+                        validas = [
+                            l for l in lineas 
+                            if not l.startswith("¡") and not any(p in l.lower() for p in palabras_ignorar)
+                        ]
+
+                        if validas:
+                            # Se ingresó/seleccionó un autor específico
+                            autor_otro_override = validas[-1]
+                        else:
+                            # Confirmó pero dejó el campo VACÍO: elegimos uno aleatorio
+                            autor_otro_override = random.choice(LISTA_OTROS_AUTORES)
+                            print(f"Campo vacío confirmado. Autor aleatorio seleccionado: {autor_otro_override}")
+
+                    except Exception as e:
+                        print(f"Error en dialogo autor: {e}")
+                        return
+
+                # Resguardo por si el script no existía
+                if not autor_otro_override:
+                    autor_otro_override = random.choice(LISTA_OTROS_AUTORES)
+
+            # Si todo está bien, pasamos a abrir la vista previa
+            GLib.idle_add(self._abrir_dialogo_preview, item_data, autor_otro_override)
+    
+        # Lanzamos en hilo secundario para evitar congelar GTK
+        threading.Thread(target=tarea_abrir_preview, daemon=True).start()
+    
+    def _abrir_dialogo_preview(self, item_data, autor_otro_override):
         dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
         dialog.run()
         dialog.destroy()
+        return False
 
 
     def on_close_window(self, widget, event):
