@@ -20,7 +20,9 @@ import gi
 import gc
 gi.require_version('Gtk', '3.0')
 gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+gi.require_version('Pango', '1.0')
+gi.require_version('PangoCairo', '1.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango, PangoCairo
 from PIL import Image, ImageDraw, ImageFont, ExifTags
 
 # ----------------------------------------------------------------------
@@ -30,18 +32,19 @@ from PIL import Image, ImageDraw, ImageFont, ExifTags
 HOME_DIR = Path.home()
 
 # 1. Directorios base (Recursos globales instalados en el sistema - Solo lectura)
-SHARE_DIR = Path("/usr/share/wallpaper_manager")
-BASE_DIR = SHARE_DIR
-IMAGENES_QUOTES_DIR = SHARE_DIR / "Buenas_imágenes_citas"
+BASE_DIR = Path("/usr/share/wallpaper_manager")
+IMAGENES_QUOTES_DIR = BASE_DIR / "Buenas_imágenes_citas"
 QUOTES_DIR = IMAGENES_QUOTES_DIR / "Quotes"
 
 # 2. Caché y Configuración (Escritura en el Home del usuario)
 TEMP_DIR = Path(tempfile.gettempdir()) / "wallpaper_manager_cache"
 
 # Ruta fija del archivo de tags en /usr/share/
-CONFIG_FILE = SHARE_DIR / "auto-download.config"
-CONFIG_TAGS_PATH = SHARE_DIR / "tags_activos.config"
-CONFIG_LANG_FILE = SHARE_DIR / "language.config"
+CONFIG_FILE = IMAGENES_QUOTES_DIR / "auto-download.config"
+CONFIG_TAGS_PATH = IMAGENES_QUOTES_DIR / "tags_activos.config"
+CONFIG_LANG_FILE = IMAGENES_QUOTES_DIR / "language.config"
+CONFIG_FONTS = IMAGENES_QUOTES_DIR / "fonts.config"
+FONTE_DEFAULT_FALLBACK = IMAGENES_QUOTES_DIR / "fonts" / "C059-BdIta.t1"
 
 # 3. Creación de carpetas si no existen
 IMAGENES_QUOTES_DIR.mkdir(parents=True, exist_ok=True)
@@ -54,7 +57,7 @@ def cargar_config_idioma():
     if CONFIG_LANG_FILE.exists():
         try:
             val = CONFIG_LANG_FILE.read_text().strip().lower()
-            if val in ["en", "es"]:
+            if val in ["en", "es", "ar", "bn", "de", "el", "fa", "fr", "gu", "hi", "id", "it", "ja", "lt", "pt", "ro", "ru", "sk", "ta", "th", "uk", "zh-CN", "zh-TW"]:
                 return val
         except Exception:
             pass
@@ -127,6 +130,48 @@ def cargar_tags_activos():
             
     return tags_config
 
+def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
+    """
+    Lee el archivo de configuración y devuelve (misma_fuente, font_path).
+    """
+    misma_fuente = True
+    font_path = fuente_sesion_actual
+
+    if os.path.exists(CONFIG_FONTS):
+        try:
+            with open(CONFIG_FONTS, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                misma_fuente = data.get("misma_fuente", True)
+                
+                if misma_fuente:
+                    font_path = fuente_sesion_actual
+                else:
+                    font_path = data.get("font_path", FONTE_DEFAULT_FALLBACK)
+        except Exception as e:
+            print(f"Error leyendo configuración de fuentes: {e}")
+
+    return misma_fuente, font_path
+
+def guardar_config_fuentes(misma_fuente, font_path_seleccionada, fuente_sesion_actual=""):
+    """
+    Guarda el estado actual en el archivo fonts.config asegurando la ruta correcta.
+    """
+    try:
+        # Asegurarnos de que el directorio exista
+        os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
+
+        # Si 'misma_fuente' está activo, guardamos la fuente de la sesión actual
+        path_a_guardar = fuente_sesion_actual if misma_fuente and fuente_sesion_actual else font_path_seleccionada
+
+        config_data = {
+            "misma_fuente": misma_fuente,
+            "font_path": path_a_guardar
+        }
+
+        with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=4)
+    except Exception as e:
+        print(f"Error guardando configuración de fuentes: {e}")
 
 def guardar_tags_activos(tags_config):
     """
@@ -234,12 +279,20 @@ LISTA_OTROS_AUTORES = [
 # ----------------------------------------------------------------------
 def get_system_fonts():
     fonts = []
-    base_dir = "/usr/share/fonts"
-    if os.path.isdir(base_dir):
-        for root, _, files in os.walk(base_dir):
-            for filename in files:
-                if filename.lower().endswith((".ttf", ".otf")):
-                    fonts.append(os.path.join(root, filename))
+    # Directorios del sistema y del usuario (incluyendo .local/share/fonts y .fonts)
+    base_dirs = [
+        Path("/usr/share/fonts"),
+        Path.home() / ".local" / "share" / "fonts",
+        Path.home() / ".fonts"
+    ]
+    
+    for base_dir in base_dirs:
+        if base_dir.is_dir():
+            for root, _, files in os.walk(base_dir):
+                for filename in files:
+                    if filename.lower().endswith((".ttf", ".otf")):
+                        fonts.append(os.path.join(root, filename))
+                        
     fonts.sort(key=lambda p: os.path.basename(p).lower())
     return fonts
 
@@ -314,7 +367,8 @@ def ejecutar_y_parsear_script(script_path, lang="es"):
         return datos
 
     except Exception as e:
-        print(f"Error ejecutando {script_path.name}: {e}")
+        nombre_script = script_path.name if hasattr(script_path, "name") else os.path.basename(str(script_path))
+        print(f"Error ejecutando {nombre_script}: {e}")
         return {"Cita": "", "Autor": "", "Fecha": "", "URL": ""}
 
 def obtener_cita_desde_txt(archivos_objetivo, patron_fallback=""):
@@ -405,45 +459,39 @@ def actualizar_interfaz_grafica(resultado):
     label_estado.set_text("")  # Limpiar el aviso de espera
     return False # Importante para que GLib.idle_add no se repita
 
-def traducir_nativo(texto, lang="es"):
-    """Traduce usando el script externo del sistema y tiene MyMemory como respaldo."""
-    if not texto or len(texto.strip()) < 3:
+def traducir_nativo(texto, target_lang="es", source_lang="auto"):
+    """Traduce usando el script externo del sistema pasando el idioma objetivo y con MyMemory como respaldo."""
+    if not texto or len(texto.strip()) < 3 or target_lang == source_lang:
         return texto
 
-    # 1. Intentar primero con el script externo del sistema
-    if lang == "es":
-        script_translate = Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/auto-translate.py")
-        if script_translate.exists():
-            try:
-                res = subprocess.run(
-                    [sys.executable, str(script_translate), texto],
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                if res.returncode == 0 and res.stdout.strip():
-                    salida_script = res.stdout.strip()
-                    
-                    # --- FILTRADO DE DEPURACIÓN AQUÍ ---
-                    # Si el script imprime "Español: ...", extraemos solo esa parte
-                    for linea in salida_script.splitlines():
-                        if "Español:" in linea:
-                            return linea.split("Español:", 1)[1].strip()
-                    
-                    # Si no contiene esos encabezados, usamos la última línea que no sea un aviso
-                    lineas_limpias = [
-                        l.strip() for l in salida_script.splitlines() 
-                        if l.strip() and not l.startswith("Traduciendo") and not l.startswith("Original:")
-                    ]
-                    if lineas_limpias:
-                        return lineas_limpias[-1]
+    # 1. Intentar primero con el script externo del sistema (pasándole el idioma)
+    script_translate = Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/auto-translate.py")
+    if script_translate.exists():
+        try:
+            res = subprocess.run(
+                [sys.executable, str(script_translate), texto, target_lang],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                salida_script = res.stdout.strip()
+                
+                # Limpieza de líneas de depuración
+                lineas_limpias = [
+                    l.strip() for l in salida_script.splitlines() 
+                    if l.strip() and not l.startswith("Traduciendo") and not l.startswith("Original:")
+                ]
+                if lineas_limpias:
+                    return lineas_limpias[-1]
+        except Exception as e:
+            print(f"Error ejecutando auto-translate.py: {e}")
 
-            except Exception as e:
-                print(f"Error ejecutando auto-translate.py: {e}")
-
-    # 2. Respaldo nativo con la API de MyMemory (si el script no existe o falló)
+    # 2. Respaldo con la API de MyMemory de forma dinámica
     try:
-        url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(texto)}&langpair=en|{lang}"
+        # Usamos autodetect (auto) o el source_lang especificado
+        langpair = f"{source_lang}|{target_lang}"
+        url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(texto)}&langpair={langpair}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read().decode('utf-8'))
@@ -463,8 +511,6 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
 
     url_meta = ""
     json_db_path = IMAGENES_QUOTES_DIR / "autores_completos_db.json"
-    if not json_db_path.exists():
-        json_db_path = SHARE_DIR / "Buenas_imágenes_citas" / "autores_completos_db.json"
 
     # Búsqueda optimizada de memoria
     if json_db_path.exists():
@@ -491,8 +537,6 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     # Búsqueda exhaustiva del script en todas las rutas conocidas
     posibles_rutas_script = [
         IMAGENES_QUOTES_DIR / "others_authors.py",
-        SHARE_DIR / "Buenas_imágenes_citas" / "others_authors.py",
-        BASE_DIR / "others_authors.py"
     ]
     
     script_path = None
@@ -593,9 +637,9 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
             "URL": ""
         }
 
-    # 4. Traducir al español
-    if lang == "es":
-        cita_pura = traducir_nativo(cita_pura, lang="es")
+    # Traducir al idioma seleccionado (Corregido de lang= a target_lang=)
+    if lang:
+        cita_pura = traducir_nativo(cita_pura, target_lang=lang, source_lang="en")
 
     return {
         "Cita": cita_pura,
@@ -605,109 +649,107 @@ def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
     }
 
 def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
-    """Función principal que despacha la obtención de citas según el autor."""
+    """Función simplificada para obtener citas según el autor y el idioma."""
+    lang_lower = lang.lower()
+
     if autor_id == "sadhguru":
-        script_sadhguru = buscar_script("sadhguru_quotes.py")
-        if not script_sadhguru:
-            return {
-                "Cita": "No se encontró sadhguru_quotes.py",
-                "Autor": "Sadhguru",
-                "Fecha": "",
-                "URL": "",
-            }
+        script_sadhguru = "/usr/share/wallpaper_manager/Buenas_imágenes_citas/sadhguru_quotes.py"
+        sadhguru_sufijos = ["es", "ar", "bn", "en", "fr", "de", "gu", "hi", "id", "it", "ja", "lt", "fa", "pt", "ro", "ru", "sk", "th", "uk"]
         
-        # 1. Primero ejecutamos y guardamos en una variable
-        resultado = ejecutar_y_parsear_script(script_sadhguru, lang)
+        # Si el idioma está en la lista usa su sufijo, sino por defecto usa inglés
+        sufijo_web = lang_lower if lang_lower in sadhguru_sufijos else "en"
         
-        # 2. Modificamos el diccionario usando esa variable
+        # 1. Intentar obtener la cita en el idioma solicitado
+        resultado = ejecutar_y_parsear_script(script_sadhguru, sufijo_web)
+        
+        # 2. Si falla o da error, reintentar en inglés como respaldo universal
+        if not resultado.get("Cita") or "No se pudo obtener" in resultado.get("Cita", ""):
+            if sufijo_web != "en":
+                resultado = ejecutar_y_parsear_script(script_sadhguru, "en")
+                sufijo_web = "en"
+        
         fecha_str = resultado.get("Fecha", "").strip()
         if fecha_str:
-            resultado["URL"] = f"https://isha.sadhguru.org/{lang}/wisdom/quotes/date/{fecha_str}"
+            resultado["URL"] = f"https://isha.sadhguru.org/{sufijo_web}/wisdom/quotes/date/{fecha_str}"
             resultado["Fecha"] = f"Isha Sadhguru ({fecha_str})"
             
-        # 3. Ahora sí devolvemos el resultado modificado
+        # 3. Si el idioma de la sesión no es español ni inglés, traducimos el resultado obtenido
+        if lang_lower not in ["es", "en"] and resultado.get("Cita"):
+            resultado["Cita"] = traducir_nativo(resultado["Cita"], target_lang=lang_lower, source_lang="en")
+
         return resultado
 
     elif autor_id == "prem_rawat":
-        json_banco_paths = [
-            IMAGENES_QUOTES_DIR / "banco.json",
-            SHARE_DIR / "Buenas_imágenes_citas" / "banco.json",
-            Path("banco.json"),
-            Path.home() / "banco.json"
-        ]
-        
-        banco_path = next((p for p in json_banco_paths if p.exists()), None)
-        
-        cita_elegida = ""
-        url_elegida = "https://timelesstoday.tv/es"
-        titulo_evento = ""
-        cadena_extraida = ""
-        
-        if banco_path:
-            try:
-                with open(banco_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if data and isinstance(data, list):
-                        item = random.choice(data)
-                        raw_cita = item.get("cita", "")
-                        texto = str(raw_cita).strip()
-                        
-                        titulo_evento = item.get("titulo", "").strip()
-                        
-                        # 1. Buscar y separar la firma al final
-                        match_firma = re.search(r'([“"„”\'«»]*)\s*Prem\s+Rawat\s*[,–\-—]?\s*(.+)$', texto, flags=re.IGNORECASE)
-                        
-                        if match_firma:
-                            texto = texto[:match_firma.start()].strip()
-                            cadena_extraida = match_firma.group(2).strip()
-                            cadena_extraida = re.sub(r'[.\s]+$', '', cadena_extraida).strip()
-                        else:
-                            texto = re.sub(r'[\s–\-—]*[“"„”\'«»]*\s*Prem\s+Rawat.*$', '', texto, flags=re.IGNORECASE).strip()
-                        
-                        # 2. Limpieza de coletas colgantes (guiones, comillas sueltas, puntos repetidos al final)
-                        texto = re.sub(r'[\s–\-—"“”\'\\.]+$', '', texto).strip()
-                        
-                        # 3. Quitar comillas de apertura redundantes en el inicio
-                        texto = re.sub(r'^[“"„”\'«»]+', '', texto).strip()
-                        
-                        # 4. Asegurar rigurosamente el punto final y limpiar cualquier coma previa al cierre
-                        if texto.endswith(","):
-                            texto = texto[:-1] + "."
-                        elif texto and not texto.endswith((".", "!", "?", "…")):
-                            texto += "."
+        # En español usamos el archivo local banco.json
+        if lang_lower == "es":
+            json_banco_paths = [
+                IMAGENES_QUOTES_DIR / "banco.json",
+            ]
+            banco_path = next((p for p in json_banco_paths if p.exists()), None)
+            
+            cita_elegida = ""
+            url_elegida = "https://timelesstoday.tv/es"
+            titulo_evento = ""
+            cadena_extraida = ""
+            
+            if banco_path:
+                try:
+                    with open(banco_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if data and isinstance(data, list):
+                            item = random.choice(data)
+                            texto = str(item.get("cita", "")).strip()
+                            titulo_evento = item.get("titulo", "").strip()
                             
-                        # Forzar que el texto devuelto incluya explícitamente sus comillas envolventes limpiecitas 
-                        # para que el generador de imágenes no las aparte ni descarte el punto interior.
-                        cita_elegida = f"{texto}"
-                        url_elegida = item.get("url") or "https://timelesstoday.tv/es"
-            except Exception as e:
-                print(f"Error leyendo banco.json para Prem Rawat: {e}")
+                            match_firma = re.search(r'([“"„”\'«»]*)\s*Prem\s+Rawat\s*[,–\-—]?\s*(.+)$', texto, flags=re.IGNORECASE)
+                            if match_firma:
+                                texto = texto[:match_firma.start()].strip()
+                                cadena_extraida = match_firma.group(2).strip()
+                                cadena_extraida = re.sub(r'[.\s]+$', '', cadena_extraida).strip()
+                            else:
+                                texto = re.sub(r'[\s–\-—]*[“"„”\'«»]*\s*Prem\s+Rawat.*$', '', texto, flags=re.IGNORECASE).strip()
+                            
+                            texto = re.sub(r'[\s–\-—"“”\'\\.]+$', '', texto).strip()
+                            texto = re.sub(r'^[“"„”\'«»]+', '', texto).strip()
+                            
+                            if texto.endswith(","):
+                                texto = texto[:-1] + "."
+                            elif texto and not texto.endswith((".", "!", "?", "…")):
+                                texto += "."
+                                
+                            cita_elegida = texto
+                            url_elegida = item.get("url") or "https://timelesstoday.tv/es"
+                except Exception as e:
+                    print(f"Error leyendo banco.json para Prem Rawat: {e}")
+                    
+            if not cita_elegida:
+                cita_elegida = "La paz es la constante dentro de ti, no el evento que ocurre a tu alrededor."
                 
-        # Respaldo por defecto si el archivo falló
-        if not cita_elegida:
-            cita_elegida = "La paz es la constante dentro de ti, no el evento que ocurre a tu alrededor."
-            
-        # Construir la cadena del autor combinando título y cadena extraída limpiamente
-        autor_str = "Prem Rawat"
-        detalles = []
-        if titulo_evento:
-            detalles.append(titulo_evento)
-        if cadena_extraida:
-            detalles.append(cadena_extraida)
-            
-        if detalles:
-            autor_str += f" ({', '.join(detalles)})"
-            
-        # Traducción si se requiere
-        if lang == "en":
-            cita_elegida = traducir_texto(cita_elegida, target_lang="en", source_lang="auto")
+            autor_str = "Prem Rawat"
+            detalles = [d for d in [titulo_evento, cadena_extraida] if d]
+            if detalles:
+                autor_str += f" ({', '.join(detalles)})"
 
-        return {
-            "Cita": cita_elegida,
-            "Autor": autor_str,
-            "Fecha": "Timeless Today" if url_elegida else "Archivo Local",
-            "URL": url_elegida,
-        }
+            return {
+                "Cita": cita_elegida,
+                "Autor": autor_str,
+                "Fecha": "Timeless Today" if url_elegida else "Archivo Local",
+                "URL": url_elegida,
+            }
+        
+        else:
+            # En otros idiomas: ejecutar el script de Prem Rawat
+            script_prem = "/usr/share/wallpaper_manager/Buenas_imágenes_citas/prem_rawat_quotes.py"
+            prem_sufijos = ["en", "fr", "de", "hi", "it", "el", "ja", "pt", "zh-cn", "zh-tw", "ta"]
+            
+            sufijo_prem = lang_lower if lang_lower in prem_sufijos else "en"
+            resultado = ejecutar_y_parsear_script(script_prem, sufijo_prem)
+            
+            # Si no está en la lista de idiomas del script, traducimos
+            if lang_lower not in prem_sufijos and lang_lower != "en" and "Cita" in resultado:
+                resultado["Cita"] = traducir_texto(resultado["Cita"], target_lang=lang_lower, source_lang="en")
+                
+            return resultado
 
     elif autor_id == "siva":
         archivos_siva = [
@@ -731,10 +773,9 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
         )
 
         # Si el texto obtenido necesita traducción
-        if lang == "en":
-            cita_sel = traducir_texto(cita_sel, target_lang="en", source_lang="auto")
-        elif lang == "es":
-            cita_sel = traducir_texto(cita_sel, target_lang="es", source_lang="auto")
+        # Traducir al idioma seleccionado de la lista de 23 idiomas (si no es español base)
+        if lang and lang != "es":
+            cita_sel = traducir_texto(cita_sel, target_lang=lang, source_lang="auto")
 
         return {
             "Cita": cita_sel,
@@ -791,10 +832,8 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
                         print(f"Error leyendo {f_path}: {e}")
 
         # Traducir según corresponda permitiendo auto-detección del origen
-        if lang == "en":
-            cita_sel = traducir_texto(cita_sel, target_lang="en", source_lang="auto")
-        elif lang == "es":
-            cita_sel = traducir_texto(cita_sel, target_lang="es", source_lang="auto")
+        if lang and lang != "es":
+            cita_sel = traducir_texto(cita_sel, target_lang=lang, source_lang="auto")
 
         return {
             "Cita": cita_sel,
@@ -847,6 +886,7 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     # ------------------------------------------
 
     canvas_w, canvas_h = bg_image.size
+
 
     try:
         font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
@@ -1077,8 +1117,17 @@ class PreviewDialog(Gtk.Dialog):
         self.main_app = parent
         self.item_data = item_data
         self.autor_otro_actual = autor_otro_override or self.main_app.autor_otro_seleccionado
+        
+        # Cargar configuración de fuentes de forma correcta
+        self.misma_fuente, self.font_path = cargar_config_fuentes(FONTE_DEFAULT_FALLBACK)
 
-        self.font_path = SYSTEM_FONTS[0] if SYSTEM_FONTS else None
+        # Validación de seguridad por si la ruta cargada no existe físicamente
+        if not os.path.exists(self.font_path):
+            if SYSTEM_FONTS:
+                self.font_path = SYSTEM_FONTS[0]
+            else:
+                self.font_path = FONTE_DEFAULT_FALLBACK
+
         self.font_size = 42
         self.offset_x = 0
         self.offset_y = 0
@@ -1125,20 +1174,98 @@ class PreviewDialog(Gtk.Dialog):
             Gdk.Screen.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
         top_bar.get_style_context().add_class("compact-bar")
-
-        # 1. Fuente
-        box_font = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        
+        
+        # Contenedor horizontal para todo lo de fuentes
+        # Contenedor horizontal para todo lo de fuentes
+        box_font = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         box_font.pack_start(Gtk.Label(label="Fuente:"), False, False, 0)
-        self.combo_fonts = Gtk.ComboBoxText()
-        self.combo_fonts.set_size_request(130, 26)
-        for font in SYSTEM_FONTS:
-            self.combo_fonts.append_text(os.path.basename(font))
+
+        # ListStore con 3 columnas: Columna 0 = Pixbuf, Columna 1 = Nombre, Columna 2 = Ruta
+        self.font_store = Gtk.ListStore(GdkPixbuf.Pixbuf, str, str)
+        
+        for font_path in SYSTEM_FONTS:
+            font_name = os.path.basename(font_path)
+            pixbuf_miniatura = None
+            try:
+                import cairo
+                import io
+                
+                surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 45, 22)
+                cr = cairo.Context(surface)
+                cr.set_source_rgb(1, 1, 1)
+                cr.paint()
+                
+                layout = PangoCairo.create_layout(cr)
+                layout.set_text("Aa", -1)
+                
+                font_fam_limpia = os.path.splitext(font_name)[0].replace("-", " ")
+                font_desc = Pango.FontDescription()
+                font_desc.set_family(font_fam_limpia)
+                font_desc.set_size(11 * Pango.SCALE)
+                layout.set_font_description(font_desc)
+                
+                cr.set_source_rgb(0, 0, 0)
+                cr.move_to(2, 2)
+                PangoCairo.show_layout(cr, layout)
+                
+                bytes_io = io.BytesIO()
+                surface.write_to_png(bytes_io)
+                bytes_io.seek(0)
+                loader = GdkPixbuf.PixbufLoader.new_with_type("png")
+                loader.write(bytes_io.read())
+                loader.close()
+                pixbuf_miniatura = loader.get_pixbuf()
+            except Exception:
+                pixbuf_miniatura = None
+
+            self.font_store.append([pixbuf_miniatura, font_name, font_path])
+
+        self.combo_fonts = Gtk.ComboBox.new_with_model(self.font_store)
+        self.combo_fonts.set_size_request(220, 26)
+        
+        # Renderizadores
+        renderer_pixbuf = Gtk.CellRendererPixbuf()
+        self.combo_fonts.pack_start(renderer_pixbuf, False)
+        self.combo_fonts.add_attribute(renderer_pixbuf, "pixbuf", 0)
+
+        renderer_text = Gtk.CellRendererText()
+        renderer_text.set_property("ellipsize", Pango.EllipsizeMode.MIDDLE)
+        self.combo_fonts.pack_start(renderer_text, True)
+        self.combo_fonts.add_attribute(renderer_text, "text", 1)
+        
+        # Seleccionar la fuente actual guardada si existe en la lista
+        # Seleccionar la fuente actual guardada si existe en la lista
         if SYSTEM_FONTS:
-            self.combo_fonts.set_active(0)
+            found_index = 0
+            for i, row in enumerate(self.font_store):
+                # Verificamos si la ruta de la fila coincide con self.font_path
+                # Evitamos usar len() sobre el objeto row de PyGObject
+                try:
+                    if row[2] == self.font_path:
+                        found_index = i
+                        break
+                except IndexError:
+                    pass
+            self.combo_fonts.set_active(found_index)
+
+        # Mantenemos el combo SIEMPRE HABILITADO para que puedas abrir la lista cuando quieras
+        self.combo_fonts.set_sensitive(True)
         self.combo_fonts.connect("changed", self.on_font_changed)
+        
         box_font.pack_start(self.combo_fonts, False, False, 0)
+        
+        # El CheckButton de Misma fuente
+        self.chk_misma_fuente = Gtk.CheckButton(label="Misma fuente")
+        self.chk_misma_fuente.set_active(self.misma_fuente)
+        self.chk_misma_fuente.connect("toggled", self.on_config_misma_fuente_toggled)
+        box_font.pack_start(self.chk_misma_fuente, False, False, 0)
+
         top_bar.pack_start(box_font, False, False, 0)
 
+        # 3. Los empaquetas en tu contenedor inferior del Preview
+        font_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        
         # 2. Tamaño
         box_size = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
         box_size.pack_start(Gtk.Label(label="Tam:"), False, False, 0)
@@ -1274,7 +1401,6 @@ class PreviewDialog(Gtk.Dialog):
         self.set_resizable(True)
         self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
         
-        # En el __init__ de PreviewDialog
         self.connect("key-press-event", self.on_preview_key_press)
     
     def on_preview_key_press(self, widget, event):
@@ -1283,6 +1409,25 @@ class PreviewDialog(Gtk.Dialog):
             self.destroy()
             return True
         return False
+        
+    def on_config_misma_fuente_toggled(self, button):
+        self.misma_fuente = button.get_active()
+        
+        if self.misma_fuente:
+            # Si se activa, mantenemos o usamos la fuente por defecto de la sesión
+            self.font_path = FONTE_DEFAULT_FALLBACK
+            if not os.path.exists(self.font_path) and SYSTEM_FONTS:
+                self.font_path = SYSTEM_FONTS[0]
+        else:
+            # Si se desactiva, dejamos la que esté seleccionada en el combo
+            tree_iter = self.combo_fonts.get_active_iter()
+            if tree_iter is not None:
+                model = self.combo_fonts.get_model()
+                self.font_path = model[tree_iter][2]
+
+        # Guardar inmediatamente la preferencia en el archivo de configuración
+        guardar_config_fuentes(self.misma_fuente, self.font_path, FONTE_DEFAULT_FALLBACK)
+        self.cargar_y_renderizar_async()
 
     def on_window_resized(self, widget, allocation):
         # Re-renderiza de forma óptima al cambiar el tamaño de ventana
@@ -1306,10 +1451,18 @@ class PreviewDialog(Gtk.Dialog):
         self.renderizar_vista_previa()
 
     def on_font_changed(self, combo):
-        idx = combo.get_active()
-        if 0 <= idx < len(SYSTEM_FONTS):
-            self.font_path = SYSTEM_FONTS[idx]
-            self.renderizar_vista_previa()
+        tree_iter = combo.get_active_iter()
+        if tree_iter is not None:
+            model = combo.get_model()
+            font_path = model[tree_iter][2]  # Ruta completa de la fuente
+            if font_path and os.path.exists(font_path):
+                self.font_path = font_path
+                self.misma_fuente = False
+                if hasattr(self, "chk_misma_fuente"):
+                    self.chk_misma_fuente.set_active(False)
+                
+                guardar_config_fuentes(self.misma_fuente, self.font_path, getattr(self, "fuente_sesion", self.font_path))
+                self.renderizar_vista_previa()
 
     def on_size_changed(self, spin):
         self.font_size = int(spin.get_value())
@@ -1626,6 +1779,14 @@ class WallpaperManagerWindow(Gtk.Window):
         self.idioma_actual = cargar_config_idioma()
         self.imagenes_cache = []
         self.imagenes_limpias_abiertas = set()
+        mapa_etiquetas_iniciales = {
+            "es": "🇪🇸 ES", "en": "🇬🇧 EN", "ar": "🏳️ AR", "bn": "🇧🇩 BN",
+            "de": "🇩🇪 DE", "el": "🇬🇷 EL", "fa": "🇮🇷 FA", "fr": "🇫🇷 FR",
+            "gu": "🇮🇳 GU", "hi": "🇮🇳 HI", "id": "🇮🇩 ID", "it": "🇮🇹 IT",
+            "ja": "🇯🇵 JA", "lt": "🇱🇹 LT", "pt": "🇧🇷 PT", "ro": "🇷🇴 RO",
+            "ru": "🇷🇺 RU", "sk": "🇸🇰 SK", "ta": "🇮🇳 TA", "th": "🇹🇭 TH",
+            "uk": "🇺🇦 UK", "zh-cn": "🇨🇳 ZH-CN", "zh-tw": "🇨🇳 ZH-TW"
+        }
 
         self.preguntar_descargar_al_cerrar = cargar_config_preguntar()
 
@@ -1638,6 +1799,9 @@ class WallpaperManagerWindow(Gtk.Window):
         self.add(main_box)
 
         main_box.pack_start(self.crear_panel_superior(), False, False, 0)
+        if hasattr(self, "btn_lang"):
+            etiqueta_guardada = mapa_etiquetas_iniciales.get(self.idioma_actual, "🇪🇸 ES")
+            self.btn_lang.set_label(etiqueta_guardada)
         main_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 5)
 
         scrolled_window = Gtk.ScrolledWindow()
@@ -1704,16 +1868,48 @@ class WallpaperManagerWindow(Gtk.Window):
         self.chk_citas.connect("toggled", self.on_citas_toggled)
         box_citas_header.pack_start(self.chk_citas, True, True, 0)
         
-        # Configuración dinámica del botón según el idioma guardado
-        self.btn_lang = Gtk.ToggleButton()
-        if self.idioma_actual == "en":
-            self.btn_lang.set_label("🇬🇧 >")
-            self.btn_lang.set_active(True)
-        else:
-            self.btn_lang.set_label("🇪🇸 >")
-            self.btn_lang.set_active(False)
-
-        self.btn_lang.connect("toggled", self.on_idioma_toggled)
+        # 1. Crear el Gtk.MenuButton para el panel superior
+        self.btn_lang = Gtk.MenuButton()
+        self.btn_lang.set_label("🇪🇸 ES")  # Etiqueta predeterminada inicial
+        
+        # 2. Crear el menú desplegable
+        menu = Gtk.Menu()
+        
+        # Lista completa con los 23 idiomas y sus identificadores visuales
+        idiomas = [
+            ("ES", "🇪🇸 ES"),
+            ("EN", "🇬🇧 EN"),      # Inglés
+            ("AR", "🏳️ AR"),      # Árabe (ajustado con bandera neutral)
+            ("BN", "🇧🇩 BN"),      # Bengalí (Bangladés)
+            ("DE", "🇩🇪 DE"),      # Alemán
+            ("EL", "🇬🇷 EL"),      # Griego
+            ("FA", "🇮🇷 FA"),      # Persa (Irán)
+            ("FR", "🇫🇷 FR"),      # Francés
+            ("GU", "🇮🇳 GU"),      # Guyaratí
+            ("HI", "🇮🇳 HI"),      # Hindi
+            ("ID", "🇮🇩 ID"),      # Indonesio
+            ("IT", "🇮🇹 IT"),      # Italiano
+            ("JA", "🇯🇵 JA"),      # Japonés
+            ("LT", "🇱🇹 LT"),      # Lituano
+            ("PT", "🇧🇷 PT"),      # Portugués
+            ("RO", "🇷🇴 RO"),      # Rumano
+            ("RU", "🇷🇺 RU"),      # Ruso
+            ("SK", "🇸🇰 SK"),      # Eslovaco
+            ("TA", "🇮🇳 TA"),      # Tamil
+            ("TH", "🇹🇭 TH"),      # Tailandés
+            ("UK", "🇺🇦 UK"),      # Ucraniano
+            ("ZH-CN", "🇨🇳 ZH-CN"), # Chino Simplificado
+            ("ZH-TW", "🇹🇼 ZH-TW"), # Chino Tradicional
+        ]
+        
+        for codigo, etiqueta_visual in idiomas:
+            item = Gtk.MenuItem(label=etiqueta_visual)
+            # Conectamos la señal para enviar el código en minúsculas o como lo requiera tu backend
+            item.connect("activate", self.on_cambiar_idioma, codigo.lower())
+            menu.append(item)
+        
+        menu.show_all()
+        self.btn_lang.set_popup(menu)
         box_citas_header.pack_end(self.btn_lang, False, False, 0)
 
         vbox_citas.pack_start(box_citas_header, False, False, 0)
@@ -1809,22 +2005,47 @@ class WallpaperManagerWindow(Gtk.Window):
         hbox.pack_end(btn_indicator, False, False, 0)
 
         return hbox
-        
 
+
+    def on_cambiar_idioma(self, widget, codigo):
+        # Mapeo de códigos a sus etiquetas visuales
+        mapa_idiomas = {
+            "es": "🇪🇸 ES",
+            "en": "🇬🇧 EN",
+            "ar": "🏳️ AR",
+            "bn": "🇧🇩 BN",
+            "de": "🇩🇪 DE",
+            "el": "🇬🇷 EL",
+            "fa": "🇮🇷 FA",
+            "fr": "🇫🇷 FR",
+            "gu": "🇮🇳 GU",
+            "hi": "🇮🇳 HI",
+            "id": "🇮🇩 ID",
+            "it": "🇮🇹 IT",
+            "ja": "🇯🇵 JA",
+            "lt": "🇱🇹 LT",
+            "pt": "🇧🇷 PT",
+            "ro": "🇷🇴 RO",
+            "ru": "🇷🇺 RU",
+            "sk": "🇸🇰 SK",
+            "ta": "🇮🇳 TA",
+            "th": "🇹🇭 TH",
+            "uk": "🇺🇦 UK",
+            "zh-cn": "🇨🇳 ZH-CN",
+            "zh-tw": "🇨🇳 ZH-TW",
+        }
+
+        self.idioma_actual = codigo
+
+        if codigo in mapa_idiomas:
+            self.btn_lang.set_label(mapa_idiomas[codigo])
+
+        # Guardar la selección de idioma inmediatamente
+        guardar_config_idioma(self.idioma_actual)
+    
     def on_config_preguntar_toggled(self, widget):
         self.preguntar_descargar_al_cerrar = widget.get_active()
         guardar_config_preguntar(self.preguntar_descargar_al_cerrar)
-
-    def on_idioma_toggled(self, widget):
-        if widget.get_active():
-            self.idioma_actual = "en"
-            widget.set_label("🇬🇧 >")
-        else:
-            self.idioma_actual = "es"
-            widget.set_label("🇪🇸 >")
-            
-        # Guardar la selección de idioma inmediatamente
-        guardar_config_idioma(self.idioma_actual)
 
     def on_citas_toggled(self, widget):
         self.citas_activas = widget.get_active()
@@ -1921,11 +2142,6 @@ class WallpaperManagerWindow(Gtk.Window):
         except Exception as e:
             print(f"Error consultando Pexels para '{query_tag}': {e}")
         return items
-
-    def cargar_imagenes_async(self):
-        self.lbl_status.set_text("Obteniendo exactamente 25 fondos...")
-        for child in self.flowbox.get_children():
-            self.flowbox.remove(child)
 
         # Tomamos los tags activos en orden (sin random)
         tags_activos = [tag for tag, chk in self.chk_estilos.items() if chk.get_active()]
@@ -2127,8 +2343,6 @@ class WallpaperManagerWindow(Gtk.Window):
             if self.citas_activas and self.autor_seleccionado == "otros":
                 rutas_dialog = [
                     IMAGENES_QUOTES_DIR / "author_dialog.py",
-                    SHARE_DIR / "Buenas_imágenes_citas" / "author_dialog.py",
-                    BASE_DIR / "author_dialog.py"
                 ]
                 script_author_dialog = next((r for r in rutas_dialog if r.exists()), None)
 
