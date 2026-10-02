@@ -159,8 +159,8 @@ def cargar_tags_activos():
 
 def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
     """
-    Lee el archivo de configuración y devuelve (misma_fuente, font_path).
-    Siempre respeta la ruta guardada en el JSON si existe.
+    Lee la configuración respetando el flag 'misma_fuente'.
+    Si es False, prioriza el fallback por defecto.
     """
     misma_fuente = True
     font_path = fuente_sesion_actual
@@ -171,12 +171,15 @@ def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
                 data = json.load(f)
                 misma_fuente = data.get("misma_fuente", True)
                 
-                # Independientemente de si es true o false, leemos la ruta guardada.
-                # Si el archivo guardado tiene una ruta válida, la usamos; si no, usamos el fallback.
-                ruta_guardada = data.get("font_path", "")
-                if ruta_guardada and str(ruta_guardada).strip():
-                    font_path = ruta_guardada
+                # Si misma_fuente es True, intentamos recuperar la ruta guardada
+                if misma_fuente:
+                    ruta_guardada = data.get("font_path", "")
+                    if ruta_guardada and str(ruta_guardada).strip():
+                        font_path = ruta_guardada
+                    else:
+                        font_path = fuente_sesion_actual
                 else:
+                    # Si es False, usamos estrictamente el fallback
                     font_path = fuente_sesion_actual
                     
         except Exception as e:
@@ -185,17 +188,12 @@ def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
     return misma_fuente, font_path
 
 def guardar_config_fuentes(misma_fuente, font_path_seleccionada):
-    """
-    Guarda el estado actual en el archivo fonts.config manteniendo siempre 
-    la ruta seleccionada intacta, sin importar el estado de 'misma_fuente'.
-    """
     try:
-        # Asegurarnos de que el directorio exista
         os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
-
+        
         config_data = {
             "misma_fuente": misma_fuente,
-            "font_path": font_path_seleccionada
+            "font_path": font_path_seleccionada if misma_fuente else FONTE_DEFAULT_FALLBACK
         }
 
         with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
