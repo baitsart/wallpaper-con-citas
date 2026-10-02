@@ -1,4 +1,5 @@
-wallpaper-con-citas (1.2.0) resolute; urgency=medium
+wallpaper-con-citas (1.2.1) resolute; urgency=medium
+  * Error fixed: the translation file that had been lost was recovered.
   * The language flag—which allows switching between English and Spanish—now also supports: Arabic, Bengali, German, Greek, Persian (Iran), French, Gujarati, Hindi, Indonesian, Italian, Japanese, Lithuanian, Portuguese, Romanian, Russian, Slovak, Tamil, Thai, Ukrainian, Simplified Chinese, and Traditional Chinese.
   * ☝️ These languages ​​are available on the Sadhguru and Prem Rawat websites.
   * For Siva P. and Sri Sri Ravi Shankar—as well as the "Other authors"—we use the `translate` command.

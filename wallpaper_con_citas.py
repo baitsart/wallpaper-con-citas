@@ -63,12 +63,39 @@ def cargar_config_idioma():
             pass
     return "es"
 
-def guardar_config_idioma(lang):
+def guardar_config_fuentes(misma_fuente, font_path_seleccionada):
+    """
+    Guarda la configuración respetando la ruta previa si se pasa el fallback,
+    evitando que se sobrescriba con valores vacíos o genéricos.
+    """
     try:
-        CONFIG_LANG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_LANG_FILE.write_text(lang, encoding="utf-8")
+        os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
+        
+        # Leemos lo que ya hay guardado previamente para no perder la ruta buena
+        ruta_a_guardar = font_path_seleccionada
+        if os.path.exists(CONFIG_FONTS):
+            try:
+                with open(CONFIG_FONTS, "r", encoding="utf-8") as f:
+                    data_vieja = json.load(f)
+                    ruta_anterior = data_vieja.get("font_path", "")
+                    
+                    # Si la nueva ruta que quieren guardar es el fallback (o está vacía),
+                    # pero antes teníamos una ruta personalizada buena, ¡la retenemos!
+                    if (not font_path_seleccionada or font_path_seleccionada == FONTE_DEFAULT_FALLBACK) and ruta_anterior and ruta_anterior != FONTE_DEFAULT_FALLBACK:
+                        ruta_a_guardar = ruta_anterior
+            except Exception:
+                pass
+
+        config_data = {
+            "misma_fuente": misma_fuente,
+            "font_path": ruta_a_guardar
+        }
+
+        with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            
     except Exception as e:
-        print(f"Error guardando idioma: {e}")
+        print(f"Error guardando configuración de fuentes: {e}")
 
 def cargar_tags_activos():
     """
@@ -133,6 +160,7 @@ def cargar_tags_activos():
 def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
     """
     Lee el archivo de configuración y devuelve (misma_fuente, font_path).
+    Siempre respeta la ruta guardada en el JSON si existe.
     """
     misma_fuente = True
     font_path = fuente_sesion_actual
@@ -143,35 +171,46 @@ def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
                 data = json.load(f)
                 misma_fuente = data.get("misma_fuente", True)
                 
-                if misma_fuente:
-                    font_path = fuente_sesion_actual
+                # Independientemente de si es true o false, leemos la ruta guardada.
+                # Si el archivo guardado tiene una ruta válida, la usamos; si no, usamos el fallback.
+                ruta_guardada = data.get("font_path", "")
+                if ruta_guardada and str(ruta_guardada).strip():
+                    font_path = ruta_guardada
                 else:
-                    font_path = data.get("font_path", FONTE_DEFAULT_FALLBACK)
+                    font_path = fuente_sesion_actual
+                    
         except Exception as e:
             print(f"Error leyendo configuración de fuentes: {e}")
 
     return misma_fuente, font_path
 
-def guardar_config_fuentes(misma_fuente, font_path_seleccionada, fuente_sesion_actual=""):
+def guardar_config_fuentes(misma_fuente, font_path_seleccionada):
     """
-    Guarda el estado actual en el archivo fonts.config asegurando la ruta correcta.
+    Guarda el estado actual en el archivo fonts.config manteniendo siempre 
+    la ruta seleccionada intacta, sin importar el estado de 'misma_fuente'.
     """
     try:
         # Asegurarnos de que el directorio exista
         os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
 
-        # Si 'misma_fuente' está activo, guardamos la fuente de la sesión actual
-        path_a_guardar = fuente_sesion_actual if misma_fuente and fuente_sesion_actual else font_path_seleccionada
-
         config_data = {
             "misma_fuente": misma_fuente,
-            "font_path": path_a_guardar
+            "font_path": font_path_seleccionada
         }
 
         with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=4)
+            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            
     except Exception as e:
         print(f"Error guardando configuración de fuentes: {e}")
+
+
+def guardar_config_idioma(lang):
+    try:
+        CONFIG_LANG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_LANG_FILE.write_text(lang, encoding="utf-8")
+    except Exception as e:
+        print(f"Error guardando idioma: {e}")
 
 def guardar_tags_activos(tags_config):
     """
@@ -460,36 +499,37 @@ def actualizar_interfaz_grafica(resultado):
     return False # Importante para que GLib.idle_add no se repita
 
 def traducir_nativo(texto, target_lang="es", source_lang="auto"):
-    """Traduce usando el script externo del sistema pasando el idioma objetivo y con MyMemory como respaldo."""
+    """Traduce usando auto-translate.py y usa MyMemory como respaldo ante fallos de red o timeouts."""
     if not texto or len(texto.strip()) < 3 or target_lang == source_lang:
         return texto
 
-    # 1. Intentar primero con el script externo del sistema (pasándole el idioma)
-    script_translate = Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/auto-translate.py")
+    # 1. Intentar primero con el script local (auto-translate.py)
+    script_translate = IMAGENES_QUOTES_DIR / "auto-translate.py"
+    if not script_translate.exists():
+        script_translate = Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/auto-translate.py")
+
     if script_translate.exists():
         try:
             res = subprocess.run(
                 [sys.executable, str(script_translate), texto, target_lang],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=8  # Ajustado un poco por debajo para que no cuelgue la app si hay lag
             )
             if res.returncode == 0 and res.stdout.strip():
                 salida_script = res.stdout.strip()
-                
-                # Limpieza de líneas de depuración
                 lineas_limpias = [
                     l.strip() for l in salida_script.splitlines() 
-                    if l.strip() and not l.startswith("Traduciendo") and not l.startswith("Original:")
+                    if l.strip() and not l.startswith("Traduciendo") and not l.startswith("Original:") and not l.startswith("Destino") and not l.startswith("[!]")
                 ]
-                if lineas_limpias:
+                # Validar que lo devuelto no sea idéntico al original si hubo un error interno
+                if lineas_limpias and lineas_limpias[-1] != texto:
                     return lineas_limpias[-1]
         except Exception as e:
-            print(f"Error ejecutando auto-translate.py: {e}")
+            print(f"Aviso: auto-translate.py falló, probando respaldo alternativo... ({e})")
 
-    # 2. Respaldo con la API de MyMemory de forma dinámica
+    # 2. Respaldo secundario con la API web de MyMemory si el script falló o dio timeout
     try:
-        # Usamos autodetect (auto) o el source_lang especificado
         langpair = f"{source_lang}|{target_lang}"
         url = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(texto)}&langpair={langpair}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -502,6 +542,7 @@ def traducir_nativo(texto, target_lang="es", source_lang="auto"):
     except Exception:
         pass
 
+    # 3. Última línea de defensa: si todo falla, devuelve el texto original
     return texto
 
 def obtener_cita_otros_autores_script(autor_nombre, lang="es"):
@@ -738,15 +779,41 @@ def obtener_cita_datos(autor_id, lang="es", autor_otro=""):
             }
         
         else:
-            # En otros idiomas: ejecutar el script de Prem Rawat
+            # En otros idiomas: intentar ejecutar el script de Prem Rawat
             script_prem = "/usr/share/wallpaper_manager/Buenas_imágenes_citas/prem_rawat_quotes.py"
             prem_sufijos = ["en", "fr", "de", "hi", "it", "el", "ja", "pt", "zh-cn", "zh-tw", "ta"]
             
             sufijo_prem = lang_lower if lang_lower in prem_sufijos else "en"
             resultado = ejecutar_y_parsear_script(script_prem, sufijo_prem)
             
-            # Si no está en la lista de idiomas del script, traducimos
-            if lang_lower not in prem_sufijos and lang_lower != "en" and "Cita" in resultado:
+            # Si el script externo falla, da error 429 o no trae cita válida, usamos el respaldo local (banco.json)
+            if not resultado or not resultado.get("Cita") or "No se pudo obtener" in resultado.get("Cita", ""):
+                banco_path = IMAGENES_QUOTES_DIR / "banco.json"
+                if banco_path.exists():
+                    try:
+                        with open(banco_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            if data and isinstance(data, list):
+                                item = random.choice(data)
+                                texto = str(item.get("cita", "")).strip()
+                                # Limpieza básica de la firma si la trae
+                                texto = re.sub(r'[\s–\-—]*[“"„”\'«»]*\s*Prem\s+Rawat.*$', '', texto, flags=re.IGNORECASE).strip()
+                                texto = re.sub(r'[\s–\-—"“”\'\\.]+$', '', texto).strip()
+                                texto = re.sub(r'^[“"„”\'«»]+', '', texto).strip()
+                                if texto and not texto.endswith((".", "!", "?", "…")):
+                                    texto += "."
+                                
+                                resultado = {
+                                    "Cita": texto,
+                                    "Autor": "Prem Rawat",
+                                    "Fecha": "Archivo Local (Respaldo)",
+                                    "URL": item.get("url") or "https://timelesstoday.tv/es"
+                                }
+                    except Exception as e:
+                        print(f"Error cargando respaldo local para Prem Rawat: {e}")
+
+            # Si el idioma solicitado no es inglés y tenemos cita, traducimos al idioma de destino
+            if lang_lower != "en" and resultado.get("Cita"):
                 resultado["Cita"] = traducir_texto(resultado["Cita"], target_lang=lang_lower, source_lang="en")
                 
             return resultado
@@ -1108,7 +1175,7 @@ class AuthorSelectionDialog(Gtk.Dialog):
 class PreviewDialog(Gtk.Dialog):
     def __init__(self, parent, item_data, autor_otro_override=""):
         super().__init__(title="Vista Previa y Edición", transient_for=parent, flags=0)
-        self.set_default_size(900, 650)
+        self.set_default_size(930, 600)
         self.set_resizable(True)
         self.set_deletable(True)
         
@@ -1411,22 +1478,19 @@ class PreviewDialog(Gtk.Dialog):
         return False
         
     def on_config_misma_fuente_toggled(self, button):
-        self.misma_fuente = button.get_active()
+        estado = button.get_active()
         
-        if self.misma_fuente:
-            # Si se activa, mantenemos o usamos la fuente por defecto de la sesión
-            self.font_path = FONTE_DEFAULT_FALLBACK
-            if not os.path.exists(self.font_path) and SYSTEM_FONTS:
-                self.font_path = SYSTEM_FONTS[0]
-        else:
-            # Si se desactiva, dejamos la que esté seleccionada en el combo
-            tree_iter = self.combo_fonts.get_active_iter()
-            if tree_iter is not None:
-                model = self.combo_fonts.get_model()
-                self.font_path = model[tree_iter][2]
+        # 1. Obtenemos la fuente actual o usamos el fallback si no hay
+        fuente_actual = getattr(self, 'font_path', FONTE_DEFAULT_FALLBACK)
+        
+        # 2. Guardamos el estado manteniendo la ruta buena protegida en el JSON
+        guardar_config_fuentes(estado, fuente_actual)
+        
+        # 3. Aplicamos la fuente según el estado (True = recupera la guardada, False = usa el fallback)
+        _, font_path_cargada = cargar_config_fuentes(FONTE_DEFAULT_FALLBACK)
+        self.font_path = font_path_cargada
 
-        # Guardar inmediatamente la preferencia en el archivo de configuración
-        guardar_config_fuentes(self.misma_fuente, self.font_path, FONTE_DEFAULT_FALLBACK)
+        # 4. Forzamos el renderizado inmediato al vuelo
         self.cargar_y_renderizar_async()
 
     def on_window_resized(self, widget, allocation):
