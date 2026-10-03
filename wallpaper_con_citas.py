@@ -896,39 +896,38 @@ def wrap_text(text, font, max_width, draw):
     return lines
 
 
-def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, draw_background=True, cita_data=None, item_data=None
+def generate_composite_image(
+    bg_path, quote_text, author_text, font_path=None, font_size=42, 
+    offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, 
+    draw_background=True, cita_data=None, item_data=None, color_text="#FFFFFF"
 ):
+    # 1. Cargar imagen base
     bg_image = Image.open(bg_path).convert("RGB")
-
-    # --- ¡OPTIMIZACIÓN CRUCIAL PARA LA CPU! ---
     bg_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
-    # ------------------------------------------
-
     canvas_w, canvas_h = bg_image.size
 
+    # 2. INICIALIZAR CAPAS SIEMPRE AL INICIO (Soluciona el UnboundLocalError)
+    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
+    luminosidad = 0
 
+    # 3. Fuentes y lienzo de prueba
     try:
         font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
     except Exception:
         font = ImageFont.load_default()
 
-    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    draw_overlay = ImageDraw.Draw(overlay)
-
     dummy = Image.new("RGB", (1, 1))
     draw_dummy = ImageDraw.Draw(dummy)
 
-    # --- 1. RECUPERAMOS EL ANCHO USANDO EL BOTÓN (width_ratio) ---
+    # 4. Cálculo de ancho y envoltura de textos
     box_w = int(canvas_w * width_ratio)
     max_text_w = box_w - 40
 
-    # --- 2. VERIFICACIÓN Y ENVOLTURA DE TEXTOS ---
     if quote_text and quote_text.strip():
         clean_quote = quote_text.strip("“”).")
-
         if not clean_quote.endswith(('.', '!', '?')):
             clean_quote = clean_quote + "."
-
         lines_quote = wrap_text(f"“{clean_quote}”", font, max_text_w, draw_dummy)
     else:
         lines_quote = []
@@ -940,12 +939,10 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
 
     all_lines = lines_quote + author_lines_wrapped
 
-    # --- 3. CÁLCULO DE ALTURA Y POSICIÓN DE LA CAJA ---
+    # 5. Cálculo de posición y pintado de la caja
     if all_lines:
         bbox = draw_dummy.textbbox((0, 0), "Ag", font=font)
         line_h = bbox[3] - bbox[1] + 8
-        
-        # Sumamos todas las líneas reales para que la caja no corte al autor por abajo
         total_lines_count = len(lines_quote) + len(author_lines_wrapped)
         box_h = (total_lines_count * line_h) + 50
 
@@ -953,19 +950,25 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
         hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
         vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
 
+        # Obtenemos el color promedio del fondo para la caja (COMO ERA ANTES)
+        small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
+        pixel = small.getpixel((0, 0))
+        r, g, b = pixel[0], pixel[1], pixel[2]
+        
+        # Calculamos la luminosidad AQUÍ (después de obtener r, g, b)
+        luminosidad = 0.299 * r + 0.587 * g + 0.114 * b
+
         if draw_background:
-            small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
-            pixel = small.getpixel((0, 0))
-            r, g, b = pixel[0], pixel[1], pixel[2]
+            # Dibujamos la caja (opacidad fija 150 y sus colores reales)
             draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
     else:
         hpos, vpos, box_h, line_h = 0, 0, 0, 0
 
+    # 6. Composición final (draw_overlay ya fue definido con seguridad en el paso 2)
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
 
-
-    # --- 4. FUNCIÓN DE ALINEACIÓN CON EL // 2 CORREGIDO ---
+    # --- FUNCIÓN DE ALINEACIÓN ---
     def calcular_x(line_text, align_type):
         line_box = draw.textbbox((0, 0), line_text, font=font)
         line_w = line_box[2] - line_box[0]
@@ -974,7 +977,7 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
         elif align_type == "right":
             return hpos + box_w - line_w - 20
         else:
-            return hpos + (box_w - line_w) // 2  # <-- ¡Aquí va el // 2 para equilibrar el margen derecho!
+            return hpos + (box_w - line_w) // 2
 
     if align_mode == "left":
         q_align, a_align = "left", "left"
@@ -991,20 +994,37 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     min_top_y = vpos + 20
     if text_y < min_top_y:
         text_y = min_top_y
+        
+    # --- DETERMINAR EL COLOR DEL TEXTO Y SOMBRA SENSIBLE AL FONDO ---
+    color_norm = str(color_text).upper().strip()
+    if color_norm in ["#FFFFFF", "FFFFFF", "WHITE"] and luminosidad > 150:
+        color_texto_final = (20, 20, 20, 255)       # Texto oscuro
+        color_sombra = (255, 255, 255, 180)         # Sombra clara/blanca (polarizada)
+    else:
+        color_texto_final = color_text
+        color_sombra = (0, 0, 0, 180)               # Sombra negra estándar
 
-    # --- 5. RENDERIZADO DE LÍNEAS DE CITA ---
+    # --- RENDERIZADO DE LÍNEAS DE CITA ---
     for line in lines_quote:
         text_x = calcular_x(line, q_align)
+        
+        # 1. Dibujar sombra si está activa
         if TEXT_SHADOW:  
-            draw.text((text_x + 2, text_y + 2), line, font=font, fill=(0, 0, 0, 180))
-        draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
+            draw.text((text_x + 2, text_y + 2), line, font=font, fill=color_sombra)
+        
+        # 2. Dibujar texto principal SIEMPRE
+        draw.text((text_x, text_y), line, font=font, fill=color_texto_final)
+        
+        # 3. Avanzar coordenada vertical (CORRIGE LA SUPERPOSICIÓN)
         text_y += line_h
 
     # --- 6. RENDERIZADO DE LA FIRMA / AUTOR ---
     if author_line:
         for author_l in author_lines_wrapped:
+            # Medimos el ancho de la línea actual del autor
             author_w = draw_dummy.textbbox((0, 0), author_l, font=font)[2] - draw_dummy.textbbox((0, 0), author_l, font=font)[0]
             
+            # Calculamos 'author_draw_x' según la alineación elegida
             if a_align == "right":
                 author_draw_x = hpos + box_w - author_w - 20
             elif a_align == "left":
@@ -1012,23 +1032,17 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
             else: 
                 author_draw_x = hpos + (box_w - author_w) // 2
 
+            # 1. Sombra del autor
             if TEXT_SHADOW:
-                draw.text(
-                    (int(author_draw_x + 2), int(text_y + 2)),
-                    author_l,
-                    font=font,
-                    fill=(0, 0, 0, 180),
-                )
-
-            draw.text(
-                (int(author_draw_x), int(text_y)),
-                author_l,
-                font=font,
-                fill=(255, 255, 255, 255),
-            )
+                draw.text((int(author_draw_x + 2), int(text_y + 2)), author_l, font=font, fill=color_sombra)
+            
+            # 2. Texto principal del autor
+            draw.text((int(author_draw_x), int(text_y)), author_l, font=font, fill=color_texto_final)
+            
+            # 3. Avanzar coordenada vertical
             text_y += line_h
 
-    # --- 7. PROCESAMIENTO EXIF Y RETORNO ---
+    # --- 4. PROCESAMIENTO EXIF Y RETORNO ---
     img_final = result.convert("RGB")
     
     cita_info = cita_data or {}
@@ -1524,7 +1538,8 @@ class PreviewDialog(Gtk.Dialog):
                     width_ratio=self.width_ratio,
                     draw_background=self.draw_background,
                     cita_data=self.cita_data,
-                    item_data=self.item_data               
+                    item_data=self.item_data,
+                    color_text=getattr(self, "color_text", "#FFFFFF")             
                 )
                 preview_path = TEMP_DIR / "preview_current.jpg"
                 comp.save(preview_path, quality=90)
@@ -1669,7 +1684,8 @@ class PreviewDialog(Gtk.Dialog):
                 width_ratio=self.width_ratio,
                 draw_background=self.draw_background,
                 cita_data=self.cita_data,
-                item_data=self.item_data
+                item_data=self.item_data,
+                color_text=getattr(self, "color_text", "#FFFFFF")
             )
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"quote_{self.item_data.get('id', 'imagen')}_{timestamp}.jpg"
@@ -1728,7 +1744,8 @@ class PreviewDialog(Gtk.Dialog):
                 width_ratio=self.width_ratio,
                 draw_background=self.draw_background,
                 cita_data=self.cita_data,
-                item_data=self.item_data
+                item_data=self.item_data,
+                color_text=getattr(self, "color_text", "#FFFFFF")
             )
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"quote_{self.item_data.get('id', 'imagen')}_{timestamp}.jpg"

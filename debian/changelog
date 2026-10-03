@@ -1,7 +1,8 @@
-wallpaper-con-citas (1.2.3) resolute; urgency=medium
+wallpaper-con-citas (1.2.4) resolute; urgency=medium
+  * Add white text to a dark image — black text to a light image. Agregué texto blanco a imagen oscura — texto negro a imagen clara
+
   * The scripts for the booth—`prem_rawat_quotes.py` and `sadhguru_quotes.py`—had not been included in the package: Fixed. And a few details about the Python method. The teachers wanted to spark a thirst for knowledge 😉 It’s all sorted out now—thanks to them. I hope you enjoy it!
   * Los scripts para el stand —`prem_rawat_quotes.py` y `sadhguru_quotes.py`— no se habían incluido en el paquete; corregido. Y algún detalle del método python. Los maestros querían generar la sed de sabiduría 😉 Ya se arregló, a ellos gracias. Espero que disfruten! 
-  
   * A minor bug was fixed; the CONFIG_FONT file (containing the "selected font") is ignored if set to `false`, so `FONTE_DEFAULT` is not used.
   * Error fixed: the translation file that had been lost was recovered.
 
