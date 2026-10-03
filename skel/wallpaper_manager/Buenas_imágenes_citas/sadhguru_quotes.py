@@ -7,11 +7,43 @@ import os
 import sys
 import re
 
-# --- Capturar Idioma ---
-IDIOMA = sys.argv[1] if len(sys.argv) > 1 else "es"
-PREFIX_LANG = "es/" if IDIOMA.lower() == "es" else ""
+# --- Capturar e identificar Idioma ---
+IDIOMA = sys.argv[1].lower() if len(sys.argv) > 1 else "es"
 
-HISTORIAL_PATH = os.path.expanduser("~/.citas_sadhguru.txt")
+# Mapeo de prefijos permitidos para la URL de Sadhguru
+# Si es 'en', la estructura oficial no suele llevar prefijo o usa raíz, pero manejamos la ruta estándar.
+IDIOMAS_SADHGURU = {
+    "es": "es",
+    "ar": "ar",
+    "bn": "bn",
+    "en": "en",
+    "fr": "fr",
+    "de": "de",
+    "gu": "gu",
+    "hi": "hi",
+    "id": "id",
+    "it": "it",
+    "ja": "ja",
+    "lt": "lt",
+    "fa": "fa",
+    "pt": "pt",
+    "ro": "ro",
+    "ru": "ru",
+    "sk": "sk",
+    "th": "th",
+    "uk": "uk"
+}
+
+# Construcción dinámica del prefijo (ej: "/es/", "/pt/", etc.)
+# Para inglés, la web de Isha suele aceptar la ruta vacía o /en/ según el enrutamiento.
+if IDIOMA in IDIOMAS_SADHGURU:
+    if IDIOMA == "en":
+        PREFIX_LANG = "" 
+    else:
+        PREFIX_LANG = f"{IDIOMA}/"
+else:
+    PREFIX_LANG = "es/"
+
 MAX_INTENTOS = 5
 
 def obtener_fecha_aleatoria():
@@ -46,13 +78,13 @@ def extraer_cita(html):
                     pass
                 
                 texto_limpio = unescape(texto_limpio)
-                texto_limpio = texto_limpio.replace("Sadhguru Quotes - ", "").strip()
+                texto_limpio = re.sub(r'Sadhguru Quotes\s*[-–—:]\s*', '', texto_limpio, flags=re.IGNORECASE).strip()
                 return texto_limpio
 
         match = re.search(r'<meta name="description" content="([^"]+)"', html)
         if match:
             texto = unescape(match.group(1))
-            texto = texto.replace(" - Sadhguru", "").replace("Sadhguru Quotes - ", "").strip()
+            texto = re.sub(r'Sadhguru Quotes\s*[-–—:]\s*', '', texto, flags=re.IGNORECASE).strip()
             texto = re.sub(r'\.\.\.$', '', texto).strip()
             return texto
 
@@ -60,21 +92,12 @@ def extraer_cita(html):
         return None
     return None
 
-def es_duplicado(cita_texto):
-    if not os.path.exists(HISTORIAL_PATH):
-        return False
-    with open(HISTORIAL_PATH, "r", encoding="utf-8") as f:
-        historial = f.read()
-        return cita_texto in historial
-
-def guardar_en_historial(cita_texto, fecha):
-    with open(HISTORIAL_PATH, "a", encoding="utf-8") as f:
-        f.write(f"{cita_texto} | Fecha origen: {fecha}\n")
-
 def main():
     for intento in range(1, MAX_INTENTOS + 1):
         fecha = obtener_fecha_aleatoria()
-        url = f"https://isha.sadhguru.org/{PREFIX_LANG}wisdom/quotes/date/{fecha}"
+        url = f"https://isha.sadhguru.org/{PREFIX_LANG}wisdom/quotes/date/{fecha}".replace("//", "/")
+        # Corrección por si el prefijo queda vacío y deja doble barra al inicio tras el dominio
+        url = url.replace("https:/isha", "https://isha")
         
         try:
             response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -82,12 +105,11 @@ def main():
                 response.encoding = "utf-8"
                 cita = extraer_cita(response.text)
                 
-                if cita and not es_duplicado(cita):
-                    guardar_en_historial(cita, fecha)
-                    
+                if cita:
                     print(f"Cita: {cita}")
                     print("Autor: Sadhguru")
                     print(f"Fecha: {fecha}")
+                    print(f"URL: {url}")
                     sys.exit(0)
         except Exception:
             pass

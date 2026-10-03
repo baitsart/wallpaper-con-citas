@@ -63,37 +63,16 @@ def cargar_config_idioma():
             pass
     return "es"
 
-def guardar_config_fuentes(misma_fuente, font_path_seleccionada):
-    """
-    Guarda la configuración respetando la ruta previa si se pasa el fallback,
-    evitando que se sobrescriba con valores vacíos o genéricos.
-    """
+def guardar_config_fuentes(misma_fuente, font_path, fuente_sesion=None):
+    # Convertimos a string por si vienen como objetos PosixPath
+    datos = {
+        "misma_fuente": misma_fuente,
+        "font_path": str(font_path if font_path else FONTE_DEFAULT_FALLBACK),
+        "fuente_sesion": str(fuente_sesion) if fuente_sesion else ""
+    }
     try:
-        os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
-        
-        # Leemos lo que ya hay guardado previamente para no perder la ruta buena
-        ruta_a_guardar = font_path_seleccionada
-        if os.path.exists(CONFIG_FONTS):
-            try:
-                with open(CONFIG_FONTS, "r", encoding="utf-8") as f:
-                    data_vieja = json.load(f)
-                    ruta_anterior = data_vieja.get("font_path", "")
-                    
-                    # Si la nueva ruta que quieren guardar es el fallback (o está vacía),
-                    # pero antes teníamos una ruta personalizada buena, ¡la retenemos!
-                    if (not font_path_seleccionada or font_path_seleccionada == FONTE_DEFAULT_FALLBACK) and ruta_anterior and ruta_anterior != FONTE_DEFAULT_FALLBACK:
-                        ruta_a_guardar = ruta_anterior
-            except Exception:
-                pass
-
-        config_data = {
-            "misma_fuente": misma_fuente,
-            "font_path": ruta_a_guardar
-        }
-
         with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
-            
+            json.dump(datos, f, indent=4)
     except Exception as e:
         print(f"Error guardando configuración de fuentes: {e}")
 
@@ -157,51 +136,26 @@ def cargar_tags_activos():
             
     return tags_config
 
-def cargar_config_fuentes(fuente_sesion_actual=FONTE_DEFAULT_FALLBACK):
-    """
-    Lee la configuración respetando el flag 'misma_fuente'.
-    Si es False, prioriza el fallback por defecto.
-    """
+def cargar_config_fuentes(default_font):
     misma_fuente = True
-    font_path = fuente_sesion_actual
-
+    font_path = default_font
+    
     if os.path.exists(CONFIG_FONTS):
         try:
             with open(CONFIG_FONTS, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                misma_fuente = data.get("misma_fuente", True)
-                
-                # Si misma_fuente es True, intentamos recuperar la ruta guardada
-                if misma_fuente:
-                    ruta_guardada = data.get("font_path", "")
-                    if ruta_guardada and str(ruta_guardada).strip():
-                        font_path = ruta_guardada
-                    else:
-                        font_path = fuente_sesion_actual
-                else:
-                    # Si es False, usamos estrictamente el fallback
-                    font_path = fuente_sesion_actual
-                    
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+                    misma_fuente = data.get("misma_fuente", True)
+                    font_path = data.get("font_path", default_font)
         except Exception as e:
             print(f"Error leyendo configuración de fuentes: {e}")
-
-    return misma_fuente, font_path
-
-def guardar_config_fuentes(misma_fuente, font_path_seleccionada):
-    try:
-        os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
-        
-        config_data = {
-            "misma_fuente": misma_fuente,
-            "font_path": font_path_seleccionada if misma_fuente else FONTE_DEFAULT_FALLBACK
-        }
-
-        with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=4, ensure_ascii=False)
+            # Comprueba si puedes utilizar un archivo limpio o el valor por defecto
             
-    except Exception as e:
-        print(f"Error guardando configuración de fuentes: {e}")
-
+        if not font_path or not os.path.exists(font_path):
+            font_path = default_font
+        
+        return misma_fuente, font_path
 
 def guardar_config_idioma(lang):
     try:
@@ -1173,7 +1127,7 @@ class AuthorSelectionDialog(Gtk.Dialog):
 class PreviewDialog(Gtk.Dialog):
     def __init__(self, parent, item_data, autor_otro_override=""):
         super().__init__(title="Vista Previa y Edición", transient_for=parent, flags=0)
-        self.set_default_size(930, 600)
+        self.set_default_size(880, 600)
         self.set_resizable(True)
         self.set_deletable(True)
         
@@ -1184,15 +1138,18 @@ class PreviewDialog(Gtk.Dialog):
         self.autor_otro_actual = autor_otro_override or self.main_app.autor_otro_seleccionado
         
         # Cargar configuración de fuentes de forma correcta
-        self.misma_fuente, self.font_path = cargar_config_fuentes(FONTE_DEFAULT_FALLBACK)
-
-        # Validación de seguridad por si la ruta cargada no existe físicamente
-        if not os.path.exists(self.font_path):
-            if SYSTEM_FONTS:
-                self.font_path = SYSTEM_FONTS[0]
-            else:
-                self.font_path = FONTE_DEFAULT_FALLBACK
-
+        self.misma_fuente, font_path_leida = cargar_config_fuentes(FONTE_DEFAULT_FALLBACK)
+        
+        # Guardamos la ruta personalizada para cuando el usuario active el toggle después
+        self.font_path_personalizada = font_path_leida if (font_path_leida and os.path.exists(str(font_path_leida))) else FONTE_DEFAULT_FALLBACK
+        
+        # APLICACIÓN DE LA REGLA DE ARRANQUE:
+        # Si misma_fuente es True, usamos la guardada. Si es False, arrancamos obligatoriamente con el fallback por defecto.
+        if self.misma_fuente:
+            self.font_path = self.font_path_personalizada
+        else:
+            self.font_path = FONTE_DEFAULT_FALLBACK
+        
         self.font_size = 42
         self.offset_x = 0
         self.offset_y = 0
@@ -1241,7 +1198,6 @@ class PreviewDialog(Gtk.Dialog):
         top_bar.get_style_context().add_class("compact-bar")
         
         
-        # Contenedor horizontal para todo lo de fuentes
         # Contenedor horizontal para todo lo de fuentes
         box_font = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         box_font.pack_start(Gtk.Label(label="Fuente:"), False, False, 0)
@@ -1299,7 +1255,6 @@ class PreviewDialog(Gtk.Dialog):
         self.combo_fonts.pack_start(renderer_text, True)
         self.combo_fonts.add_attribute(renderer_text, "text", 1)
         
-        # Seleccionar la fuente actual guardada si existe en la lista
         # Seleccionar la fuente actual guardada si existe en la lista
         if SYSTEM_FONTS:
             found_index = 0
@@ -1478,16 +1433,19 @@ class PreviewDialog(Gtk.Dialog):
     def on_config_misma_fuente_toggled(self, button):
         estado = button.get_active()
         
-        # 1. Obtenemos la fuente actual o usamos el fallback si no hay
-        fuente_actual = getattr(self, 'font_path', FONTE_DEFAULT_FALLBACK)
+        # 1. Aseguramos tener la ruta personalizada guardada en memoria
+        if not hasattr(self, 'font_path_personalizada') or not self.font_path_personalizada:
+            self.font_path_personalizada = getattr(self, 'font_path', FONTE_DEFAULT_FALLBACK)
+            
+        # 2. Guardamos en el JSON el estado (false/true) y la ruta personalizada intacta
+        guardar_config_fuentes(estado, self.font_path_personalizada)
         
-        # 2. Guardamos el estado manteniendo la ruta buena protegida en el JSON
-        guardar_config_fuentes(estado, fuente_actual)
-        
-        # 3. Aplicamos la fuente según el estado (True = recupera la guardada, False = usa el fallback)
-        _, font_path_cargada = cargar_config_fuentes(FONTE_DEFAULT_FALLBACK)
-        self.font_path = font_path_cargada
-
+        # 3. AQUÍ ESTÁ EL CAMBIO: Asignamos explícitamente a la variable que usa el renderizador
+        if estado:
+            self.font_path = self.font_path_personalizada
+        else:
+            self.font_path = FONTE_DEFAULT_FALLBACK
+            
         # 4. Forzamos el renderizado inmediato al vuelo
         self.cargar_y_renderizar_async()
 
@@ -1523,7 +1481,7 @@ class PreviewDialog(Gtk.Dialog):
                 if hasattr(self, "chk_misma_fuente"):
                     self.chk_misma_fuente.set_active(False)
                 
-                guardar_config_fuentes(self.misma_fuente, self.font_path, getattr(self, "fuente_sesion", self.font_path))
+                guardar_config_fuentes(self.misma_fuente, self.font_path)
                 self.renderizar_vista_previa()
 
     def on_size_changed(self, spin):
@@ -1832,7 +1790,7 @@ class WallpaperManagerWindow(Gtk.Window):
         header_bar.set_title("Wallpaper Manager — Citas & Wallpapers")
         self.set_titlebar(header_bar)
 
-        self.set_default_size(880, 600)
+        self.set_default_size(910, 580)
         self.set_position(Gtk.WindowPosition.CENTER)
 
         self.citas_activas = True

@@ -13,15 +13,24 @@ from urllib.request import Request, urlopen
 # ----------------------------------------------------------------------
 IDIOMA = sys.argv[1].lower() if len(sys.argv) > 1 else "es"
 
-# Selección de endpoint y prefijo de URL según el idioma recibido
-if IDIOMA == "en":
-    LANG_CODE = "en-US"
-    URL_PREFIX = "en"
-else:
-    LANG_CODE = "es-ES"
-    URL_PREFIX = "es"
+# Mapeo de códigos de idioma para la API y las rutas web de TimelessToday
+# Soportando español, inglés, portugués, francés, alemán, italiano, etc.
+IDIOMAS_MAP = {
+    "es": {"lang_code": "es-ES", "prefix": "es"},
+    "en": {"lang_code": "en-US", "prefix": "en"},
+    "pt": {"lang_code": "pt-BR", "prefix": "pt"},
+    "fr": {"lang_code": "fr-FR", "prefix": "fr"},
+    "de": {"lang_code": "de-DE", "prefix": "de"},
+    "it": {"lang_code": "it-IT", "prefix": "it"},
+    "hi": {"lang_code": "hi-IN", "prefix": "hi"},
+    "ja": {"lang_code": "ja-JP", "prefix": "ja"},
+}
 
-HISTORIAL_PATH = os.path.expanduser("~/.citas_prem_rawat.txt")
+# Configuración por defecto o selección basada en el mapa
+config_idioma = IDIOMAS_MAP.get(IDIOMA, {"lang_code": "en-US", "prefix": IDIOMA})
+LANG_CODE = config_idioma["lang_code"]
+URL_PREFIX = config_idioma["prefix"]
+
 API_BASE = f"https://api3.timelesstoday.io/v2/cms/products/{LANG_CODE}/group/2/12"
 LIMIT = 12
 MAX_INTENTOS = 5
@@ -43,6 +52,16 @@ def hacer_peticion(offset):
         with urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
+        # Si la API específica del idioma da error (ej. por falta de caché estricta en el endpoint regional),
+        # intentamos un fallback seguro a en-US manteniendo el prefijo visual del idioma solicitado.
+        if LANG_CODE != "en-US":
+            try:
+                fallback_url = f"https://api3.timelesstoday.io/v2/cms/products/en-US/group/2/12/{offset}"
+                req_fb = Request(fallback_url, headers=headers)
+                with urlopen(req_fb, timeout=15) as resp_fb:
+                    return json.loads(resp_fb.read().decode("utf-8"))
+            except Exception:
+                pass
         return None
 
 
@@ -86,28 +105,15 @@ def procesar_evento(evento):
     if lugar_fecha:
         lugar_fecha = re.sub(r'^["“”’\']+|["“”’\']+$', "", lugar_fecha).strip().rstrip(".")
 
-    # 5. Obtener URL real del evento
+    # 5. Obtener URL real del evento adaptada al prefijo del idioma actual
     uuid = evento.get("tt_media_uuid")
     
     if uuid:
-        url_contenido = f"https://timelesstoday.tv/es/events/product/{uuid}"
+        url_contenido = f"https://timelesstoday.tv/{URL_PREFIX}/events/product/{uuid}"
     else:
-        url_contenido = "https://timelesstoday.tv/es"
+        url_contenido = f"https://timelesstoday.tv/{URL_PREFIX}"
     
     return texto, lugar_fecha or "Desconocida", url_contenido
-
-
-def es_duplicado(cita_texto):
-    if not os.path.exists(HISTORIAL_PATH):
-        return False
-    with open(HISTORIAL_PATH, "r", encoding="utf-8") as f:
-        historial = f.read()
-        return cita_texto in historial
-
-
-def guardar_en_historial(cita_texto, fecha_lugar):
-    with open(HISTORIAL_PATH, "a", encoding="utf-8") as f:
-        f.write(f"{cita_texto} | Origen: {fecha_lugar}\n")
 
 
 def main():
@@ -134,19 +140,15 @@ def main():
         if not eventos:
             continue
 
-        random.shuffle(eventos)
-
-        for evento in eventos:
-            cita, lugar_fecha, url_video = procesar_evento(evento)
-            if cita and not es_duplicado(cita):
-                guardar_en_historial(cita, lugar_fecha)
-
-                # Salida formateada
-                print(f"Cita: {cita}")
-                print("Autor: Prem Rawat")
-                print(f"Fecha: {lugar_fecha}")
-                print(f"URL: {url_video}")
-                sys.exit(0)
+        evento = random.choice(eventos)
+        cita, lugar_fecha, url_video = procesar_evento(evento)
+        
+        if cita:
+            print(f"Cita: {cita}")
+            print("Autor: Prem Rawat")
+            print(f"Fecha: {lugar_fecha}")
+            print(f"URL: {url_video}")
+            sys.exit(0)
 
     print(f"Error: No se pudo obtener una cita válida tras {MAX_INTENTOS} intentos.")
     sys.exit(1)
