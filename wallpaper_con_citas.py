@@ -896,38 +896,39 @@ def wrap_text(text, font, max_width, draw):
     return lines
 
 
-def generate_composite_image(
-    bg_path, quote_text, author_text, font_path=None, font_size=42, 
-    offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, 
-    draw_background=True, cita_data=None, item_data=None, color_text="#FFFFFF"
+def generate_composite_image(bg_path, quote_text, author_text, font_path=None, font_size=42, offset_x=0, offset_y=0, align_mode="center", width_ratio=0.7, draw_background=True, cita_data=None, item_data=None
 ):
-    # 1. Cargar imagen base
     bg_image = Image.open(bg_path).convert("RGB")
+
+    # --- ¡OPTIMIZACIÓN CRUCIAL PARA LA CPU! ---
     bg_image.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
+    # ------------------------------------------
+
     canvas_w, canvas_h = bg_image.size
 
-    # 2. INICIALIZAR CAPAS SIEMPRE AL INICIO (Soluciona el UnboundLocalError)
-    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    draw_overlay = ImageDraw.Draw(overlay)
-    luminosidad = 0
 
-    # 3. Fuentes y lienzo de prueba
     try:
         font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
     except Exception:
         font = ImageFont.load_default()
 
+    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
+
     dummy = Image.new("RGB", (1, 1))
     draw_dummy = ImageDraw.Draw(dummy)
 
-    # 4. Cálculo de ancho y envoltura de textos
+    # --- 1. RECUPERAMOS EL ANCHO USANDO EL BOTÓN (width_ratio) ---
     box_w = int(canvas_w * width_ratio)
     max_text_w = box_w - 40
 
+    # --- 2. VERIFICACIÓN Y ENVOLTURA DE TEXTOS ---
     if quote_text and quote_text.strip():
         clean_quote = quote_text.strip("“”).")
+
         if not clean_quote.endswith(('.', '!', '?')):
             clean_quote = clean_quote + "."
+
         lines_quote = wrap_text(f"“{clean_quote}”", font, max_text_w, draw_dummy)
     else:
         lines_quote = []
@@ -939,10 +940,12 @@ def generate_composite_image(
 
     all_lines = lines_quote + author_lines_wrapped
 
-    # 5. Cálculo de posición y pintado de la caja
+    # --- 3. CÁLCULO DE ALTURA Y POSICIÓN DE LA CAJA ---
     if all_lines:
         bbox = draw_dummy.textbbox((0, 0), "Ag", font=font)
         line_h = bbox[3] - bbox[1] + 8
+        
+        # Sumamos todas las líneas reales para que la caja no corte al autor por abajo
         total_lines_count = len(lines_quote) + len(author_lines_wrapped)
         box_h = (total_lines_count * line_h) + 50
 
@@ -950,25 +953,19 @@ def generate_composite_image(
         hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
         vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
 
-        # Obtenemos el color promedio del fondo para la caja (COMO ERA ANTES)
-        small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
-        pixel = small.getpixel((0, 0))
-        r, g, b = pixel[0], pixel[1], pixel[2]
-        
-        # Calculamos la luminosidad AQUÍ (después de obtener r, g, b)
-        luminosidad = 0.299 * r + 0.587 * g + 0.114 * b
-
         if draw_background:
-            # Dibujamos la caja (opacidad fija 150 y sus colores reales)
+            small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
+            pixel = small.getpixel((0, 0))
+            r, g, b = pixel[0], pixel[1], pixel[2]
             draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
     else:
         hpos, vpos, box_h, line_h = 0, 0, 0, 0
 
-    # 6. Composición final (draw_overlay ya fue definido con seguridad en el paso 2)
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
 
-    # --- FUNCIÓN DE ALINEACIÓN ---
+
+    # --- 4. FUNCIÓN DE ALINEACIÓN CON EL // 2 CORREGIDO ---
     def calcular_x(line_text, align_type):
         line_box = draw.textbbox((0, 0), line_text, font=font)
         line_w = line_box[2] - line_box[0]
@@ -977,7 +974,7 @@ def generate_composite_image(
         elif align_type == "right":
             return hpos + box_w - line_w - 20
         else:
-            return hpos + (box_w - line_w) // 2
+            return hpos + (box_w - line_w) // 2  # <-- ¡Aquí va el // 2 para equilibrar el margen derecho!
 
     if align_mode == "left":
         q_align, a_align = "left", "left"
@@ -994,37 +991,20 @@ def generate_composite_image(
     min_top_y = vpos + 20
     if text_y < min_top_y:
         text_y = min_top_y
-        
-    # --- DETERMINAR EL COLOR DEL TEXTO Y SOMBRA SENSIBLE AL FONDO ---
-    color_norm = str(color_text).upper().strip()
-    if color_norm in ["#FFFFFF", "FFFFFF", "WHITE"] and luminosidad > 150:
-        color_texto_final = (20, 20, 20, 255)       # Texto oscuro
-        color_sombra = (255, 255, 255, 180)         # Sombra clara/blanca (polarizada)
-    else:
-        color_texto_final = color_text
-        color_sombra = (0, 0, 0, 180)               # Sombra negra estándar
 
-    # --- RENDERIZADO DE LÍNEAS DE CITA ---
+    # --- 5. RENDERIZADO DE LÍNEAS DE CITA ---
     for line in lines_quote:
         text_x = calcular_x(line, q_align)
-        
-        # 1. Dibujar sombra si está activa
         if TEXT_SHADOW:  
-            draw.text((text_x + 2, text_y + 2), line, font=font, fill=color_sombra)
-        
-        # 2. Dibujar texto principal SIEMPRE
-        draw.text((text_x, text_y), line, font=font, fill=color_texto_final)
-        
-        # 3. Avanzar coordenada vertical (CORRIGE LA SUPERPOSICIÓN)
+            draw.text((text_x + 2, text_y + 2), line, font=font, fill=(0, 0, 0, 180))
+        draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
         text_y += line_h
 
     # --- 6. RENDERIZADO DE LA FIRMA / AUTOR ---
     if author_line:
         for author_l in author_lines_wrapped:
-            # Medimos el ancho de la línea actual del autor
             author_w = draw_dummy.textbbox((0, 0), author_l, font=font)[2] - draw_dummy.textbbox((0, 0), author_l, font=font)[0]
             
-            # Calculamos 'author_draw_x' según la alineación elegida
             if a_align == "right":
                 author_draw_x = hpos + box_w - author_w - 20
             elif a_align == "left":
@@ -1032,17 +1012,23 @@ def generate_composite_image(
             else: 
                 author_draw_x = hpos + (box_w - author_w) // 2
 
-            # 1. Sombra del autor
             if TEXT_SHADOW:
-                draw.text((int(author_draw_x + 2), int(text_y + 2)), author_l, font=font, fill=color_sombra)
-            
-            # 2. Texto principal del autor
-            draw.text((int(author_draw_x), int(text_y)), author_l, font=font, fill=color_texto_final)
-            
-            # 3. Avanzar coordenada vertical
+                draw.text(
+                    (int(author_draw_x + 2), int(text_y + 2)),
+                    author_l,
+                    font=font,
+                    fill=(0, 0, 0, 180),
+                )
+
+            draw.text(
+                (int(author_draw_x), int(text_y)),
+                author_l,
+                font=font,
+                fill=(255, 255, 255, 255),
+            )
             text_y += line_h
 
-    # --- 4. PROCESAMIENTO EXIF Y RETORNO ---
+    # --- 7. PROCESAMIENTO EXIF Y RETORNO ---
     img_final = result.convert("RGB")
     
     cita_info = cita_data or {}
@@ -1538,8 +1524,7 @@ class PreviewDialog(Gtk.Dialog):
                     width_ratio=self.width_ratio,
                     draw_background=self.draw_background,
                     cita_data=self.cita_data,
-                    item_data=self.item_data,
-                    color_text=getattr(self, "color_text", "#FFFFFF")             
+                    item_data=self.item_data               
                 )
                 preview_path = TEMP_DIR / "preview_current.jpg"
                 comp.save(preview_path, quality=90)
@@ -1684,8 +1669,7 @@ class PreviewDialog(Gtk.Dialog):
                 width_ratio=self.width_ratio,
                 draw_background=self.draw_background,
                 cita_data=self.cita_data,
-                item_data=self.item_data,
-                color_text=getattr(self, "color_text", "#FFFFFF")
+                item_data=self.item_data
             )
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"quote_{self.item_data.get('id', 'imagen')}_{timestamp}.jpg"
@@ -1744,8 +1728,7 @@ class PreviewDialog(Gtk.Dialog):
                 width_ratio=self.width_ratio,
                 draw_background=self.draw_background,
                 cita_data=self.cita_data,
-                item_data=self.item_data,
-                color_text=getattr(self, "color_text", "#FFFFFF")
+                item_data=self.item_data
             )
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"quote_{self.item_data.get('id', 'imagen')}_{timestamp}.jpg"
@@ -1807,9 +1790,10 @@ class WallpaperManagerWindow(Gtk.Window):
         header_bar.set_title("Wallpaper Manager — Citas & Wallpapers")
         self.set_titlebar(header_bar)
 
-        self.set_default_size(910, 580)
+        self.set_default_size(910, 610)
         self.set_position(Gtk.WindowPosition.CENTER)
 
+        self.cancel_download_event = threading.Event()
         self.citas_activas = True
         self.autor_seleccionado = "prem_rawat"
         self.autor_otro_seleccionado = ""
@@ -1861,7 +1845,23 @@ class WallpaperManagerWindow(Gtk.Window):
         self.chk_preguntar.set_active(self.preguntar_descargar_al_cerrar)
         self.chk_preguntar.connect("toggled", self.on_config_preguntar_toggled)
         bottom_bar.pack_end(self.chk_preguntar, False, False, 0)
+        
+        # --- BOTÓN ABRIR CARPETA ---
+        self.btn_open_folder = Gtk.Button(label=" 📂 +\n Folder ")
+        self.btn_open_folder.set_sensitive(False)  # Deshabilitado por defecto (Modo ON)
+        self.btn_open_folder.connect("clicked", self.on_btn_open_folder_clicked)
+        
+        # Empaquetamos en bottom_bar (junto al botón refresh)
+        bottom_bar.pack_end(self.btn_open_folder, False, False, 0)
 
+        # --- SWITCH ON / OFF (Insertado en bottom_bar a la derecha) ---
+        lbl_switch = Gtk.Label(label=" ONLINE 🖼️ \n OFFLINE 📂 ")
+        self.switch_online = Gtk.Switch()
+        self.switch_online.set_active(True)  # ON por defecto
+        self.switch_online.connect("state-set", self.on_switch_online_toggled)
+
+        bottom_bar.pack_end(self.switch_online, False, False, 0)
+        bottom_bar.pack_end(lbl_switch, False, False, 0)
         btn_refresh = Gtk.Button(label="🔄 Cargar más Imágenes")
         btn_refresh.connect("clicked", lambda w: self.cargar_imagenes_async())
         bottom_bar.pack_end(btn_refresh, False, False, 0)
@@ -1883,6 +1883,141 @@ class WallpaperManagerWindow(Gtk.Window):
             self.close()  # Esto simula el cierre de la ventana y activa el control de la casilla
             return True
         return False
+
+    def cargar_imagenes_locales(self, cantidad=25):
+        """Carga hasta 25 imágenes desde los directorios locales"""
+        dir_citas, dir_auto = obtener_directorios()
+        
+        # Extensiones válidas
+        extensiones = ("*.jpg", "*.jpeg", "*.png", "*.webp")
+        archivos_encontrados = []
+        for ext in extensiones:
+            archivos_encontrados.extend(dir_citas.glob(ext))
+            archivos_encontrados.extend(dir_auto.glob(ext))
+        
+        # Barajar y limitar a la cantidad deseada (25 por defecto)
+        import random
+        random.shuffle(archivos_encontrados)
+        archivos_seleccionados = archivos_encontrados[:cantidad]
+        
+        items_locales = []
+        for p in archivos_seleccionados:
+            img_id = f"local_{p.stem}"
+            items_locales.append({
+                "id": img_id,
+                "thumb_path": str(p),
+                "full_url": str(p),
+                "local_path": str(p),
+                "source_url": str(p)
+            })
+            
+        return items_locales
+
+    def on_switch_online_toggled(self, switch, state):
+        """
+        Callback del pasador.
+        state == True -> ON (Descargas / Online)
+        state == False -> OFF (Cancelar descargas y cargar 25 locales)
+        """
+        # Habilita 'Abrir Carpeta' solo cuando el switch esté en OFF (state == False)
+        self.btn_open_folder.set_sensitive(not state)
+
+        if not state:
+            # --- OFF LINE ---
+            self.cancel_download_event.set()
+            self.lbl_status.set_text("Descargas canceladas. Cargando imágenes locales...")
+            
+            items_locales = self.cargar_imagenes_locales(cantidad=25)
+            self.imagenes_cache = items_locales
+            self.actualizar_flowbox_con_items(items_locales)
+            self.lbl_status.set_text(f"Cargadas {len(items_locales)} imágenes locales.")
+        else:
+            # --- ON LINE ---
+            self.cancel_download_event.clear()
+            self.lbl_status.set_text("Modo Online activado.")
+            self.cargar_imagenes_async()
+
+        return False
+
+    def on_btn_open_folder_clicked(self, widget):
+        """Abre un diálogo de selección de carpeta si estamos en modo Offline"""
+        if self.switch_online.get_active():
+            return  # Seguridad extra: no hace nada si está en ON
+
+        dialog = Gtk.FileChooserDialog(
+            title="Seleccionar carpeta de imágenes",
+            parent=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+
+        respuesta = dialog.run()
+        if respuesta == Gtk.ResponseType.OK:
+            carpeta_seleccionada = dialog.get_filename()
+            dialog.destroy()
+            
+            # Cargar imágenes desde la nueva carpeta elegida
+            items_locales = self.cargar_imagenes_desde_directorio(carpeta_seleccionada, cantidad=25)
+            if items_locales:
+                self.imagenes_cache = items_locales
+                self.actualizar_flowbox_con_items(items_locales)
+                self.lbl_status.set_text(f"Cargadas {len(items_locales)} imágenes desde carpeta personal.")
+            else:
+                self.lbl_status.set_text("No se encontraron imágenes compatibles en la carpeta seleccionada.")
+        else:
+            dialog.destroy()
+
+    def cargar_imagenes_desde_directorio(self, ruta_dir, cantidad=25):
+        """Escanea un directorio específico buscando formatos de imagen válidos"""
+        from pathlib import Path
+        import random
+
+        path_obj = Path(ruta_dir)
+        extensiones = ("*.jpg", "*.jpeg", "*.png", "*.webp")
+        
+        archivos_encontrados = []
+        for ext in extensiones:
+            archivos_encontrados.extend(path_obj.glob(ext))
+            # Opcional: incluir variantes en mayúsculas (.JPG, .PNG, etc.)
+            archivos_encontrados.extend(path_obj.glob(ext.upper()))
+
+        random.shuffle(archivos_encontrados)
+        archivos_seleccionados = archivos_encontrados[:cantidad]
+
+        items_locales = []
+        for p in archivos_seleccionados:
+            img_id = f"custom_{p.stem}"
+            items_locales.append({
+                "id": img_id,
+                "thumb_path": str(p),
+                "full_url": str(p),
+                "local_path": str(p),
+                "source_url": str(p)
+            })
+
+        return items_locales
+
+    def actualizar_flowbox_con_items(self, items):
+        """Limpia el FlowBox y coloca las nuevas miniaturas obtenidas"""
+        # Eliminar hijos anteriores
+        for child in self.flowbox.get_children():
+            self.flowbox.remove(child)
+            
+        for item in items:
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    item["thumb_path"], 180, 120, True
+                )
+                img = Gtk.Image.new_from_pixbuf(pixbuf)
+                img.item_data = item
+                self.flowbox.add(img)
+            except Exception as e:
+                print(f"Error al cargar miniatura local: {e}")
+                
+        self.flowbox.show_all()
 
     def crear_panel_superior(self):
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
@@ -2191,6 +2326,11 @@ class WallpaperManagerWindow(Gtk.Window):
 
             # Recorremos los tags activos ordenadamente hasta completar 25
             for query_tag in tags_activos:
+
+                if self.cancel_download_event.is_set():
+                    print("Descarga cancelada por el usuario (Switch en OFF)")
+                    break
+
                 if len(items) >= 25:
                     break
                 
@@ -2269,6 +2409,17 @@ class WallpaperManagerWindow(Gtk.Window):
         return items
 
     def cargar_imagenes_async(self):
+        # 1. VERIFICACIÓN INICIAL: Si está en OFF, carga locales de inmediato y no abre hilos
+        if hasattr(self, 'switch_online') and not self.switch_online.get_active():
+            self.lbl_status.set_text("Cargando imágenes locales...")
+            items_locales = self.cargar_imagenes_locales(cantidad=25)
+            self.imagenes_cache = items_locales
+            self.actualizar_flowbox_con_items(items_locales)
+            self.lbl_status.set_text(f"Cargadas {len(items_locales)} imágenes locales.")
+            return
+
+        # 2. MODO ONLINE (Si el switch está activado)
+        self.cancel_download_event.clear()
         self.lbl_status.set_text("Obteniendo aleatoriamente 25 fondos de varios tags y sitios...")
         for child in self.flowbox.get_children():
             self.flowbox.remove(child)
@@ -2286,6 +2437,11 @@ class WallpaperManagerWindow(Gtk.Window):
             # Bucle para recolectar de forma aleatoria hasta llegar a 25
             intentos = 0
             while len(items) < 25 and intentos < 60:
+                # 3. VERIFICACIÓN DE CANCELACIÓN EN CADA ITERACIÓN
+                if self.cancel_download_event.is_set():
+#                    print("Descarga cancelada por el usuario (Switch pasó a OFF).")
+                    break
+
                 intentos += 1
                 tag_actual = random.choice(tags_activos)
                 sitio_actual = random.choice(sitios)
