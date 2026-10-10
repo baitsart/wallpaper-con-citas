@@ -14,6 +14,7 @@ Depends: ${misc:Depends},
          gir1.2-gdkpixbuf-2.0,
          python3-pil,
          libnotify-bin,
+         yad,
          xdg-utils
 Description: Wallpaper Manager con citas e integracion GTK3
  Aplicacion para descargar fondos de pantalla desde Wallhaven/Picsum

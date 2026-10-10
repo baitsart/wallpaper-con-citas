@@ -1,7 +1,12 @@
-wallpaper-con-citas (1.2.5) resolute; urgency=medium
+wallpaper-con-citas (1.2.7) resolute; urgency=medium
+  * You can now set up a rotation for quotes and/or wallpapers, with an optional autostart feature. With the settings we used to edit the appointment. Improvements have been made to quote downloading for other languages. New dependency: the `yad` command.
+  * If you want to do some development work, the script `/usr/share/wallpaper_manager/Buenas_imágenes_citas/new_authors_banks.py` is available. It handles downloading *all* quotes for a given author—specifically those from az-quotes listed in `autores_completos_db.json`—using the same method employed for "Sri Sri Ravi Shankar." It might become editable in future versions via a "Select default authors" feature; that functionality is close to completion and wouldn't take much effort to implement.
+  * EN ESPAÑOL: aquí ↓
+  * Ahora tiene para poner a ciclar; citas y/o wallpapers. Con la configuración que hayamos editado la cita. Y opcional en autostart. Mejoras en descarga de las citas para otros idiomas. Nueva dependencia: comando `yad`.
+  * Si quieres desarrollar, tienes, el script "/usr/share/wallpaper_manager/Buenas_imágenes_citas/new_authors_banks.py". Dispone la descarga de *todas* las citas de un autor, que exista en "autores_completos_db.json"; los que corresponden, a az-quotes. Y usa el mismo método de "Sri Sri Ravi Shankar", tal vez quede editable en próximas versiones, a modo de "Elegir autores por defecto", ya está cerca, y es poco trabajo para lograrlo.
+  
   * An ONLINE/OFFLINE toggle is added to the GTK interface. Turning it off cancels the download, and it loads local images in batches of 25 from: ~/$PICTURES/wallpaper manager_citas. 
   * You can upload a local folder to batch-upload personal images: + Folder
-
   * Se agrega un ONLINE - OFFLINE, en GTK. Y que al apagar, cancela la descargar, y cargue de a 25 imágenes locales, de: ~/Imágenes/wallpaper manager_citas
   * Se puede cargar una carpeta local, para cargar imágenes en lote personal: + Folder
 

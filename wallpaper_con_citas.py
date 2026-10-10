@@ -45,6 +45,7 @@ CONFIG_TAGS_PATH = IMAGENES_QUOTES_DIR / "tags_activos.config"
 CONFIG_LANG_FILE = IMAGENES_QUOTES_DIR / "language.config"
 CONFIG_FONTS = IMAGENES_QUOTES_DIR / "fonts.config"
 FONTE_DEFAULT_FALLBACK = IMAGENES_QUOTES_DIR / "fonts" / "C059-BdIta.t1"
+CONFIG_CICLAR_PATH = IMAGENES_QUOTES_DIR / "ciclar_render.config"
 
 # 3. Creación de carpetas si no existen
 IMAGENES_QUOTES_DIR.mkdir(parents=True, exist_ok=True)
@@ -135,6 +136,82 @@ def cargar_tags_activos():
             pass
             
     return tags_config
+
+def obtener_directorio_defecto():
+    dir_citas, _ = obtener_directorios()
+    return str(dir_citas)
+
+def cargar_ciclar_config():
+    """
+    Carga la configuración de ciclar_render.config.
+    Si el archivo no existe, lo crea con los valores por defecto.
+    """
+    default_config = {
+        "ciclar": False,
+        "cita": True,
+        "autor": "Prem Rawat",
+        "tiempo": 5,
+        "directorio": obtener_directorio_defecto()
+    }
+
+    if not CONFIG_CICLAR_PATH.exists():
+        guardar_ciclar_config(default_config)
+        return default_config
+
+    config = default_config.copy()
+    try:
+        lineas = CONFIG_CICLAR_PATH.read_text(encoding="utf-8").splitlines()
+        for linea in lineas:
+            linea_limpia = linea.strip()
+            if not linea_limpia or linea_limpia.startswith("#") or "=" not in linea_limpia:
+                continue
+            clave, valor = linea_limpia.split("=", 1)
+            clave = clave.strip().lower()
+            valor = valor.strip().strip('"').strip("'")
+
+            if clave == "ciclar":
+                config["ciclar"] = valor.lower() in ["true", "1", "sí", "si"]
+            elif clave == "cita":
+                config["cita"] = valor.lower() in ["true", "1", "sí", "si"]
+            elif clave == "autor":
+                config["autor"] = valor
+            elif clave == "tiempo":
+                try:
+                    config["tiempo"] = int(valor)
+                except ValueError:
+                    pass
+            elif clave == "directorio":
+                config["directorio"] = valor
+    except Exception as e:
+        print(f"Error al leer ciclar_render.config: {e}")
+
+    return config
+
+
+def guardar_ciclar_config(config_dict):
+    """
+    Guarda los valores en /usr/share/wallpaper_manager/Buenas_imágenes_citas/ciclar_render.config
+    """
+    try:
+        CONFIG_CICLAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        contenido = (
+            f"ciclar = {'true' if config_dict.get('ciclar', False) else 'false'}\n"
+            f"cita = {'true' if config_dict.get('cita', True) else 'false'}\n"
+            f"autor = \"{config_dict.get('autor', 'Prem Rawat')}\"\n"
+            f"tiempo = {config_dict.get('tiempo', 5)}\n"
+            f"directorio = \"{config_dict.get('directorio', obtener_directorio_defecto())}\"\n"
+            f"lang = \"{config_dict.get('lang', 'es')}\"\n"
+            f"font_path = \"{config_dict.get('font_path', str(FONTE_DEFAULT_FALLBACK))}\"\n"
+            f"font_size = {config_dict.get('font_size', 42)}\n"
+            f"offset_x = {config_dict.get('offset_x', 0)}\n"
+            f"offset_y = {config_dict.get('offset_y', 0)}\n"
+            f"width_ratio = {config_dict.get('width_ratio', 0.7)}\n"
+            f"align_mode = \"{config_dict.get('align_mode', 'center')}\"\n"
+            f"draw_background = {'true' if config_dict.get('draw_background', True) else 'false'}\n"
+        )
+        CONFIG_CICLAR_PATH.write_text(contenido, encoding="utf-8")
+    except Exception as e:
+        print(f"Error al guardar ciclar_render.config: {e}")
 
 def cargar_config_fuentes(default_font):
     misma_fuente = True
@@ -1790,8 +1867,16 @@ class WallpaperManagerWindow(Gtk.Window):
         header_bar.set_title("Wallpaper Manager — Citas & Wallpapers")
         self.set_titlebar(header_bar)
 
-        self.set_default_size(910, 610)
+        self.set_default_size(890, 630)
         self.set_position(Gtk.WindowPosition.CENTER)
+
+        self.font_path = str(FONTE_DEFAULT_FALLBACK)
+        self.font_size = 42
+        self.offset_x = 0
+        self.offset_y = 0
+        self.width_ratio = 0.7
+        self.align_mode = "center"
+        self.draw_background = True
 
         self.cancel_download_event = threading.Event()
         self.citas_activas = True
@@ -1939,6 +2024,7 @@ class WallpaperManagerWindow(Gtk.Window):
 
         return False
 
+
     def on_btn_open_folder_clicked(self, widget):
         """Abre un diálogo de selección de carpeta si estamos en modo Offline"""
         if self.switch_online.get_active():
@@ -1958,6 +2044,9 @@ class WallpaperManagerWindow(Gtk.Window):
         if respuesta == Gtk.ResponseType.OK:
             carpeta_seleccionada = dialog.get_filename()
             dialog.destroy()
+            
+            # --- GUARDAR EL DIRECTORIO SELECCIONADO EN LA SESIÓN ---
+            self.directorio_actual = carpeta_seleccionada
             
             # Cargar imágenes desde la nueva carpeta elegida
             items_locales = self.cargar_imagenes_desde_directorio(carpeta_seleccionada, cantidad=25)
@@ -2024,6 +2113,9 @@ class WallpaperManagerWindow(Gtk.Window):
         
         # Inicializar o limpiar el diccionario antes de rellenarlo
         self.chk_estilos = {}
+
+        # Cargar configuración de ciclar_render.config
+        self.ciclar_config = cargar_ciclar_config()        
 
         # ------------------------------------------------------------------
         # 1. BLOQUE DE CITAS (Izquierda)
@@ -2139,13 +2231,25 @@ class WallpaperManagerWindow(Gtk.Window):
         exp_estilos.add(grid)
         hbox.pack_start(exp_estilos, False, False, 0)
 
-        # Spacer secundario opcional si quieres separar estilos del botón derecho
-        spacer2 = Gtk.Box()
-        hbox.pack_start(spacer2, True, True, 0)
+        # ------------------------------------------------------------------
+        # 3. ESPACIADOR (Empuja todo el bloque derecho)
+        # ------------------------------------------------------------------
+        spacer = Gtk.Box()
+        hbox.pack_start(spacer, True, True, 0)
 
         # ------------------------------------------------------------------
-        # 4. BOTÓN APP INDICATOR (Extremo Derecho)
+        # 4. CONTENEDOR DERECHO (Casilla "Ciclar" + Botón App Indicator)
         # ------------------------------------------------------------------
+        box_derecho = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        box_derecho.set_valign(Gtk.Align.CENTER)
+
+        # Casilla "Ciclar"
+        self.chk_ciclar = Gtk.CheckButton(label="Ciclar")
+        self.chk_ciclar.set_active(self.ciclar_config.get("ciclar", False))
+        self.chk_ciclar.connect("toggled", self.on_ciclar_toggled)
+        box_derecho.pack_start(self.chk_ciclar, False, False, 0)
+
+        # Botón App Indicator
         btn_indicator = Gtk.Button()
         btn_indicator.set_relief(Gtk.ReliefStyle.NONE)
         
@@ -2174,9 +2278,16 @@ class WallpaperManagerWindow(Gtk.Window):
                 print(f"Error al iniciar el indicator: {e}")
 
         btn_indicator.connect("clicked", al_pulsar_indicator)
-        hbox.pack_end(btn_indicator, False, False, 0)
+        box_derecho.pack_start(btn_indicator, False, False, 0)
+
+        hbox.pack_start(box_derecho, False, False, 0)
 
         return hbox
+
+    def on_ciclar_toggled(self, widget):
+        estado_activo = widget.get_active()
+        self.ciclar_config["ciclar"] = estado_activo
+        guardar_ciclar_config(self.ciclar_config)
 
 
     def on_cambiar_idioma(self, widget, codigo):
@@ -2591,6 +2702,17 @@ class WallpaperManagerWindow(Gtk.Window):
     def _abrir_dialogo_preview(self, item_data, autor_otro_override):
         dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
         dialog.run()
+        
+        # --- AQUÍ ESTÁ EL PUENTE QUE FALTABA COPIAR ---
+        self.font_path = getattr(dialog, 'font_path', self.font_path)
+        self.font_size = getattr(dialog, 'font_size', self.font_size)
+        self.offset_x = getattr(dialog, 'offset_x', self.offset_x)
+        self.offset_y = getattr(dialog, 'offset_y', self.offset_y)
+        self.width_ratio = getattr(dialog, 'width_ratio', self.width_ratio)
+        self.align_mode = getattr(dialog, 'align_mode', self.align_mode)
+        self.draw_background = getattr(dialog, 'draw_background', self.draw_background)
+        # ----------------------------------------------
+        
         dialog.destroy()
         return False
 
@@ -2605,7 +2727,96 @@ class WallpaperManagerWindow(Gtk.Window):
                     break
         guardar_tags_activos(IMAGE_STYLES)
 
-        # 2. Si el usuario desactivó el aviso de descarga, cerramos la app al instante
+        # 2. SI LA CASILLA "CICLAR" ESTÁ ACTIVA, LANZAR YAD AL CERRAR
+        if hasattr(self, "chk_ciclar") and self.chk_ciclar.get_active(): 
+            tiempo_actual = self.ciclar_config.get("tiempo", 5) 
+            cita_activa = self.ciclar_config.get("cita", True) 
+            
+            # Verificamos si ya existe el archivo de autostart para marcar el checkbox por defecto en Yad
+            autostart_path = Path.home() / ".config" / "autostart" / "Ciclar_wallpaper_citas.desktop"
+            auto_start_activo = autostart_path.exists()
+            
+            idioma_actual = getattr(self, 'idioma_actual', 'es') 
+            autor_crudo = getattr(self, 'autor_seleccionado', 'Prem Rawat') 
+            
+            nombres_autores_map = { 
+                "prem_rawat": "Prem Rawat", 
+                "sadhguru": "Sadhguru", 
+                "siva": "Dr. Siva P.", 
+                "ravi_shankar": "Sri Sri Ravi Shankar", 
+                "otros": "Otros Autores" 
+            } 
+            autor_actual = nombres_autores_map.get(autor_crudo.lower(), autor_crudo.replace("_", " ").title()) 
+            image_activa = self.switch_online.get_active() 
+
+            cmd_yad = [ 
+                "yad", "--form", 
+                "--title=Config. de Ciclado", 
+                "--text=Ajusta los parámetros para el ciclo:", 
+                "--field=Cicle min::NUM", f"{tiempo_actual}!1..1440!1",  
+                "--field=image:CHK", str(image_activa).lower(),         
+                "--field=quote:CHK", str(cita_activa).lower(),         
+                "--field=autostart:CHK", str(auto_start_activo).lower(),         
+                f"--field=Idioma (Lang):", str(idioma_actual) 
+            ]
+
+            try:
+                res = subprocess.run(cmd_yad, capture_output=True, text=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    partes = res.stdout.strip().split("|")
+                    if len(partes) >= 5:
+                        nuevo_tiempo = partes[0].strip() or str(tiempo_actual)
+                        nueva_image = partes[1].strip()
+                        nueva_quote = partes[2].strip()
+                        nuevo_autostart = partes[3].strip()
+                        nuevo_lang = partes[4].strip() or idioma_actual
+                        
+                        # --- GESTIONAR EL AUTOSTART SEGÚN EL CHECKBOX DE YAD ---
+                        autostart_dir = Path.home() / ".config" / "autostart"
+                        autostart_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        if nuevo_autostart.lower() in ["true", "1", "si", "sí"]:
+                            desktop_content = f"""[Desktop Entry]
+Type=Application
+Exec=/usr/share/wallpaper_manager/Buenas_imágenes_citas/ciclar.sh
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=ciclar_wallpaper_citas
+Comment=Auto ciclar wallpaper con citas
+"""
+                            autostart_path.write_text(desktop_content)
+                        else:
+                            if autostart_path.exists():
+                                autostart_path.unlink()
+                        
+                        # Guardamos los datos generales del ciclo
+                        self.ciclar_config["tiempo"] = int(float(nuevo_tiempo)) if nuevo_tiempo.replace('.','',1).isdigit() else 5
+                        self.ciclar_config["cita"] = nueva_quote.upper() in ["TRUE", "1", "SI", "SÍ"]
+                        self.ciclar_config["autor"] = autor_actual
+                        self.ciclar_config["lang"] = nuevo_lang
+                        self.ciclar_config["ciclar"] = True
+                        self.ciclar_config["directorio"] = getattr(self, 'directorio_actual', obtener_directorio_defecto())
+                        
+                        # Y capturamos las propiedades visuales actuales de la sesión
+                        self.ciclar_config["font_path"] = getattr(self, 'font_path', str(FONTE_DEFAULT_FALLBACK))
+                        self.ciclar_config["font_size"] = getattr(self, 'font_size', 42)
+                        self.ciclar_config["offset_x"] = getattr(self, 'offset_x', 0)
+                        self.ciclar_config["offset_y"] = getattr(self, 'offset_y', 0)
+                        self.ciclar_config["width_ratio"] = getattr(self, 'width_ratio', 0.7)
+                        self.ciclar_config["align_mode"] = getattr(self, 'align_mode', 'center')
+                        self.ciclar_config["draw_background"] = getattr(self, 'draw_background', True)
+                        
+                        guardar_ciclar_config(self.ciclar_config)
+
+                        # Lanzar el script ciclar.sh en segundo plano
+                        script_ciclar = BASE_DIR / "Buenas_imágenes_citas" / "ciclar.sh"
+                        if script_ciclar.exists():
+                            subprocess.Popen(["bash", str(script_ciclar)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                print(f"Error al desplegar Yad al cerrar: {e}")
+
+        # 3. Guardado tradicional opcional de la app
         if not self.preguntar_descargar_al_cerrar:
             Gtk.main_quit()
             return False
@@ -2630,32 +2841,46 @@ class WallpaperManagerWindow(Gtk.Window):
             progress_dialog.show_all()
 
             def process_saving():
-                for src_clean_path in list(self.imagenes_limpias_abiertas):
-                    if os.path.exists(src_clean_path):
-                        dest_clean_path = AUTO_DIR / f"limpia_{Path(src_clean_path).name}"
-                        shutil.copy(src_clean_path, dest_clean_path)
+                try:
+                    for src_clean_path in list(self.imagenes_limpias_abiertas):
+                        if os.path.exists(src_clean_path):
+                            dest_clean_path = AUTO_DIR / f"limpia_{Path(src_clean_path).name}"
+                            shutil.copy(src_clean_path, dest_clean_path)
 
-                for item in self.imagenes_cache:
-                    hd_path = TEMP_DIR / f"full_{item['id']}.jpg"
-                    if not hd_path.exists():
-                        try:
-                            descargar_archivo(item["full_url"], hd_path)
-                        except Exception as e:
-                            print(f"Error al descargar {item['id']}: {e}")
-                    if hd_path.exists():
-                        dest_path = AUTO_DIR / f"miniatura_{item['id']}.jpg"
-                        shutil.copy(hd_path, dest_path)
+                    for item in self.imagenes_cache:
+                        url_o_path = item.get("full_url", "")
+                        
+                        if url_o_path.startswith("/") or os.path.exists(url_o_path):
+                            local_src = Path(url_o_path)
+                            if local_src.exists():
+                                dest_path = AUTO_DIR / f"miniatura_{item['id']}.jpg"
+                                shutil.copy(local_src, dest_path)
+                        else:
+                            hd_path = TEMP_DIR / f"full_{item['id']}.jpg"
+                            if not hd_path.exists():
+                                try:
+                                    descargar_archivo(url_o_path, hd_path)
+                                except Exception as e:
+                                    print(f"Error al descargar {item['id']}: {e}")
+                            if hd_path.exists():
+                                dest_path = AUTO_DIR / f"miniatura_{item['id']}.jpg"
+                                shutil.copy(hd_path, dest_path)
+                except Exception as e:
+                    print(f"Error durante el guardado: {e}")
 
+                # Función que se ejecuta en el hilo principal al terminar todo
                 def finish():
                     progress_dialog.destroy()
                     Gtk.main_quit()
 
                 GLib.idle_add(finish)
 
+            # Lanzamos el proceso en segundo plano para que la interfaz no se congele ni pierda fluidez
             threading.Thread(target=process_saving, daemon=True).start()
+            
+            # Retornamos True para evitar que el evento de cierre destruya la ventana antes de que el hilo termine
             return True
 
-        # Si el usuario responde que NO al diálogo de guardado, liberamos la terminal también
         Gtk.main_quit()
         return False
 
