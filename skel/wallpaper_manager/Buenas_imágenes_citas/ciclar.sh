@@ -122,6 +122,9 @@ IMG_FINAL="$IMG_FOLDER/wallpaper manager_citas/Generadas/render_quote_${NOMBRE_B
 if [ -f "$IMG_FINAL" ]; then
     gsettings set org.gnome.desktop.background picture-uri "file://$IMG_FINAL"
     gsettings set org.gnome.desktop.background picture-uri-dark "file://$IMG_FINAL"
+    if [ -f "/usr/share/wallpaper_manager/w_m/actions/ir-prev.sh" ]; then
+        sh /usr/share/wallpaper_manager/w_m/actions/ir-prev.sh
+    fi
 fi
 
 # 4. Esperar el tiempo configurado y reiniciar el ciclo

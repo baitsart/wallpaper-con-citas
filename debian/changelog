@@ -1,4 +1,10 @@
-wallpaper-con-citas (1.2.7) resolute; urgency=medium
+wallpaper-con-citas (1.2.8) resolute; urgency=medium
+  * For render_guardado.py, the calculation is now performed automatically for the text box.
+  * Text contrast has been addressed for light images with black text (and vice versa). Additionally, a bug involving the shell call; `sh` was being used instead of `bash`: fixed.
+  * EN ESPAÑOL: aquí ↓
+  * Para render_guardado.py, hace el cálculo automático a la caja de texto.
+  * Ahora el contraste del texto en imágenes claras, con texto negro, y viceversa. Y, había un bug de el llamado en shell, con `sh` y correspondía `bash`: reparado.
+
   * You can now set up a rotation for quotes and/or wallpapers, with an optional autostart feature. With the settings we used to edit the appointment. Improvements have been made to quote downloading for other languages. New dependency: the `yad` command.
   * If you want to do some development work, the script `/usr/share/wallpaper_manager/Buenas_imágenes_citas/new_authors_banks.py` is available. It handles downloading *all* quotes for a given author—specifically those from az-quotes listed in `autores_completos_db.json`—using the same method employed for "Sri Sri Ravi Shankar." It might become editable in future versions via a "Select default authors" feature; that functionality is close to completion and wouldn't take much effort to implement.
   * EN ESPAÑOL: aquí ↓

@@ -91,11 +91,10 @@ def generate_composite_image(bg_path, quote_text, author_text, config):
     bg_image = Image.open(bg_path).convert("RGB")
     orig_w, orig_h = bg_image.size
     
-    # Calcular la nueva altura manteniendo estrictamente la relación de aspecto original basada en un ancho de 1920
+    # 1. Proporción nativa real sin barras: ancho fijo de 1920 y alto proporcional
     target_width = 1920
     target_height = int(orig_h * (target_width / orig_w))
     
-    # Redimensionar la imagen de forma proporcional
     bg_image = bg_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
     canvas_w, canvas_h = bg_image.size
 
@@ -117,23 +116,44 @@ def generate_composite_image(bg_path, quote_text, author_text, config):
     dummy = Image.new("RGB", (1, 1))
     draw_dummy = ImageDraw.Draw(dummy)
 
-    box_w = int(canvas_w * width_ratio)
-    max_text_w = box_w - 40
+    # Ancho dinámico de la caja de texto adaptado al ancho de la imagen
+    max_possible_w = int(canvas_w * 0.65)
+    min_possible_w = int(canvas_w * 0.40)
 
     if quote_text and quote_text.strip():
         clean_quote = quote_text.strip("“”).")
         if not clean_quote.endswith(('.', '!', '?')):
             clean_quote = clean_quote + "."
-        lines_quote = wrap_text(f"“{clean_quote}”", font, max_text_w, draw_dummy)
+        lines_quote = wrap_text(f"“{clean_quote}”", font, max_possible_w, draw_dummy)
     else:
         lines_quote = []
 
     author_line = f"— {author_text}" if author_text and author_text.strip() else ""
-    author_lines_wrapped = []
+    author_lines_wrapped = wrap_text(author_line, font, max_possible_w, draw_dummy) if author_line else []
+    
+    all_lines = lines_quote + author_lines_wrapped
+
+    max_line_w = 0
+    for line in all_lines:
+        line_box = draw_dummy.textbbox((0, 0), line, font=font)
+        lw = line_box[2] - line_box[0]
+        if lw > max_line_w:
+            max_line_w = lw
+
+    calculated_w = max_line_w + 50
+    box_w = max(min_possible_w, min(calculated_w, max_possible_w))
+    max_text_w = box_w - 40
+
+    # Re-aplicar wrap con el ancho definitivo
+    if quote_text and quote_text.strip():
+        lines_quote = wrap_text(f"“{clean_quote}”", font, max_text_w, draw_dummy)
     if author_line:
         author_lines_wrapped = wrap_text(author_line, font, max_text_w, draw_dummy)
-
+    
     all_lines = lines_quote + author_lines_wrapped
+
+    hpos, vpos, box_h, line_h = 0, 0, 0, 0
+    r, g, b = 40, 40, 40
 
     if all_lines:
         bbox = draw_dummy.textbbox((0, 0), "Ag", font=font)
@@ -141,16 +161,25 @@ def generate_composite_image(bg_path, quote_text, author_text, config):
         total_lines_count = len(lines_quote) + len(author_lines_wrapped)
         box_h = (total_lines_count * line_h) + 50
 
-        margin = 20
+        # Márgenes proporcionales basados en las dimensiones reales de la foto
+        margin = 40
         hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
         vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
-
+        
         if draw_background:
             small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
             pixel = small.getpixel((0, 0))
-            draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(pixel[0], pixel[1], pixel[2], 150))
+            r, g, b = pixel[0], pixel[1], pixel[2]
+            draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
+
+    # Contraste automático según la luminancia del fondo
+    luminancia = (0.299 * r + 0.587 * g + 0.114 * b)
+    if luminancia > 140:
+        color_texto = (0, 0, 0, 255)
+        color_sombra = (255, 255, 255, 180)
     else:
-        hpos, vpos, box_h, line_h = 0, 0, 0, 0
+        color_texto = (255, 255, 255, 255)
+        color_sombra = (0, 0, 0, 180)
 
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
@@ -184,8 +213,8 @@ def generate_composite_image(bg_path, quote_text, author_text, config):
     for line in lines_quote:
         text_x = calcular_x(line, q_align)
         if TEXT_SHADOW:  
-            draw.text((text_x + 2, text_y + 2), line, font=font, fill=(0, 0, 0, 180))
-        draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
+            draw.text((text_x + 2, text_y + 2), line, font=font, fill=color_sombra)
+        draw.text((text_x, text_y), line, font=font, fill=color_texto)
         text_y += line_h
 
     if author_line:
@@ -200,8 +229,8 @@ def generate_composite_image(bg_path, quote_text, author_text, config):
                 author_draw_x = hpos + (box_w - author_w) // 2
 
             if TEXT_SHADOW:
-                draw.text((int(author_draw_x + 2), int(text_y + 2)), author_l, font=font, fill=(0, 0, 0, 180))
-            draw.text((int(author_draw_x), int(text_y)), author_l, font=font, fill=(255, 255, 255, 255))
+                draw.text((int(author_draw_x + 2), int(text_y + 2)), author_l, font=font, fill=color_sombra)
+            draw.text((int(author_draw_x), int(text_y)), author_l, font=font, fill=color_texto)
             text_y += line_h
 
     img_final = result.convert("RGB")

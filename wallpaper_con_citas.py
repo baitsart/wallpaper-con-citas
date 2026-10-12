@@ -139,7 +139,7 @@ def cargar_tags_activos():
 
 def obtener_directorio_defecto():
     dir_citas, _ = obtener_directorios()
-    return str(dir_citas)
+    return str(dir_citas / "Automatica")
 
 def cargar_ciclar_config():
     """
@@ -1030,6 +1030,8 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
         hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
         vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
 
+        r, g, b = 0, 0, 0
+
         if draw_background:
             small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
             pixel = small.getpixel((0, 0))
@@ -1037,6 +1039,15 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
             draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
     else:
         hpos, vpos, box_h, line_h = 0, 0, 0, 0
+        
+    luminancia = (0.299 * r + 0.587 * g + 0.114 * b)
+
+    if luminancia > 140:
+        color_texto = (0, 0, 0, 255)         # Negro para fondos claros
+        color_sombra = (255, 255, 255, 180)  # Sombra blanca para contraste
+    else:
+        color_texto = (255, 255, 255, 255)   # Blanco para fondos oscuros
+        color_sombra = (0, 0, 0, 180)        # Sombra negra habitual
 
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
@@ -1073,8 +1084,8 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
     for line in lines_quote:
         text_x = calcular_x(line, q_align)
         if TEXT_SHADOW:  
-            draw.text((text_x + 2, text_y + 2), line, font=font, fill=(0, 0, 0, 180))
-        draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
+            draw.text((text_x + 2, text_y + 2), line, font=font, fill=color_sombra)
+        draw.text((text_x, text_y), line, font=font, fill=color_texto)
         text_y += line_h
 
     # --- 6. RENDERIZADO DE LA FIRMA / AUTOR ---
@@ -1094,14 +1105,14 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
                     (int(author_draw_x + 2), int(text_y + 2)),
                     author_l,
                     font=font,
-                    fill=(0, 0, 0, 180),
+                    fill=color_sombra,
                 )
 
             draw.text(
                 (int(author_draw_x), int(text_y)),
                 author_l,
                 font=font,
-                fill=(255, 255, 255, 255),
+                fill=color_texto,
             )
             text_y += line_h
 
@@ -2778,7 +2789,7 @@ class WallpaperManagerWindow(Gtk.Window):
                         if nuevo_autostart.lower() in ["true", "1", "si", "sí"]:
                             desktop_content = f"""[Desktop Entry]
 Type=Application
-Exec=/usr/share/wallpaper_manager/Buenas_imágenes_citas/ciclar.sh
+Exec=bash /usr/share/wallpaper_manager/Buenas_imágenes_citas/ciclar.sh
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
@@ -2902,7 +2913,7 @@ if __name__ == "__main__":
     try:
         # Instancias tu ventana principal aquí, por ejemplo:
         app = WallpaperManagerWindow() 
-        app.show_all()  # <--- ¡Crucial para que los elementos salgan a la vista!
+        app.show_all()  # <--- Para que los elementos salgan a la vista.
         
         Gtk.main()
     except KeyboardInterrupt:
