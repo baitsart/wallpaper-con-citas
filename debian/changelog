@@ -1,10 +1,23 @@
-wallpaper-con-citas (1.2.8) resolute; urgency=medium
+wallpaper-con-citas (1.2.9) resolute; urgency=medium
+
+  * Improvements have been made to a couple of details: if a user changes their background, the random cycling feature does not trigger immediately; instead, it waits for the established cycle interval.
+  * If no background is selected, the random cycling feature will trigger upon closing the menu, provided that "Cycling" is enabled.
+  * A fix was applied so that if the "BOXES" (the colored background container for text) is removed from text that had been set to a black color, the text remains black.
+  * The "Font Selector" box and the method for changing fonts have been fixed.
+  * Fixed a bug where the autostart .desktop file was left behind during the postrm phase.
+  * EN ESPAÑOL: aquí ↓
+  * Hubieron mejoras en un par de detalles;  si el usuario cambia su fondo no lanzamos el ciclado random, de inmediato, espera el tiempo de ciclo establecido.
+  * Y si no elige ningún fondo de pantalla, al cerrar y está activo el "Ciclar", sí se lanza, un random.
+  * Se reparó que al sacar el BOXES (caja de color del fondo del texto) a un texto que se haya contrastado en negro, permanece negro.
+  * Se reparó la caja de "Selector de tipografías", y el método de cambio de fuente tipográfica.
+  * Se reparó un bug, de haber dejado el archivo .desktop, del autostar, en postrm
+
+
   * For render_guardado.py, the calculation is now performed automatically for the text box.
   * Text contrast has been addressed for light images with black text (and vice versa). Additionally, a bug involving the shell call; `sh` was being used instead of `bash`: fixed.
   * EN ESPAÑOL: aquí ↓
   * Para render_guardado.py, hace el cálculo automático a la caja de texto.
   * Ahora el contraste del texto en imágenes claras, con texto negro, y viceversa. Y, había un bug de el llamado en shell, con `sh` y correspondía `bash`: reparado.
-
   * You can now set up a rotation for quotes and/or wallpapers, with an optional autostart feature. With the settings we used to edit the appointment. Improvements have been made to quote downloading for other languages. New dependency: the `yad` command.
   * If you want to do some development work, the script `/usr/share/wallpaper_manager/Buenas_imágenes_citas/new_authors_banks.py` is available. It handles downloading *all* quotes for a given author—specifically those from az-quotes listed in `autores_completos_db.json`—using the same method employed for "Sri Sri Ravi Shankar." It might become editable in future versions via a "Select default authors" feature; that functionality is close to completion and wouldn't take much effort to implement.
   * EN ESPAÑOL: aquí ↓

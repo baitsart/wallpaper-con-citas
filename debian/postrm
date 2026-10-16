@@ -11,8 +11,9 @@ case "$1" in
         # 2. Borrar el lanzador en la carpeta local de TODOS los usuarios en /home/
         for user_dir in /home/*; do
             if [ -d "$user_dir" ]; then
-                rm -f "$user_dir/.local/share/applications/wallpaper_con_citas.desktop"
-                rm -f "$user_dir/.local/share/applications/wallpaper_manager.desktop"
+                rm -f "$user_dir/.local/share/applications/wallpaper_con_citas.desktop" ]
+                rm -f "$user_dir/.local/share/applications/wallpaper_manager.desktop" ]
+                rm -f "$user_dir/.config/autostart/Ciclar_wallpaper_citas.desktop" ]
             fi
         done
 

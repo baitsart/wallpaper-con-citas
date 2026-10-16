@@ -54,6 +54,27 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
 TEXT_SHADOW = True  
 
+# Actualizar CONFIG_CICLAR_PATH con valor_de_sleep = N
+if CONFIG_CICLAR_PATH.exists():
+    try:
+        contenido = CONFIG_CICLAR_PATH.read_text(encoding="utf-8")
+        if "valor_de_sleep" in contenido:
+            # Reemplazar la línea existente sin importar si tenía `:` o `=`
+            lineas = contenido.splitlines()
+            nuevas_lineas = []
+            for l in lineas:
+                if l.strip().lower().startswith("valor_de_sleep"):
+                    nuevas_lineas.append("valor_de_sleep = Y")
+                else:
+                    nuevas_lineas.append(l)
+            CONFIG_CICLAR_PATH.write_text("\n".join(nuevas_lineas) + "\n", encoding="utf-8")
+        else:
+            # Si no existe, lo agregamos al final
+            with open(CONFIG_CICLAR_PATH, "a", encoding="utf-8") as f:
+                f.write("valor_de_sleep = Y\n")
+    except Exception as e:
+        print(f"Error actualizando valor_de_sleep: {e}")
+        
 def cargar_config_idioma():
     if CONFIG_LANG_FILE.exists():
         try:
@@ -64,6 +85,7 @@ def cargar_config_idioma():
             pass
     return "es"
 
+
 def guardar_config_fuentes(misma_fuente, font_path, fuente_sesion=None):
     # Convertimos a string por si vienen como objetos PosixPath
     datos = {
@@ -72,10 +94,33 @@ def guardar_config_fuentes(misma_fuente, font_path, fuente_sesion=None):
         "fuente_sesion": str(fuente_sesion) if fuente_sesion else ""
     }
     try:
+
+    # Aseguramos que el directorio exista antes de guardar
+        os.makedirs(os.path.dirname(CONFIG_FONTS), exist_ok=True)
         with open(CONFIG_FONTS, "w", encoding="utf-8") as f:
             json.dump(datos, f, indent=4)
     except Exception as e:
         print(f"Error guardando configuración de fuentes: {e}")
+
+def on_config_misma_fuente_toggled(self, button):
+    estado = button.get_active()
+    self.misma_fuente = estado
+    
+    # Determinamos la ruta a mostrar/guardar según el estado
+    if not estado:
+        target_path = FONTE_DEFAULT_FALLBACK
+    else:
+        # Recuperamos la última fuente guardada o la actual de la sesión
+        target_path = getattr(self, "font_path", FONTE_DEFAULT_FALLBACK)
+    
+    # Guardamos en el archivo usando tu función
+    guardar_config_fuentes(self.misma_fuente, target_path)
+    
+    # Actualizamos la selección visual en el ComboBox sin disparar lógica extra si no es necesario
+    for i, row in enumerate(self.font_store):
+        if row[2] == target_path:
+            self.combo_fonts.set_active(i)
+            break
 
 def cargar_tags_activos():
     """
@@ -208,6 +253,7 @@ def guardar_ciclar_config(config_dict):
             f"width_ratio = {config_dict.get('width_ratio', 0.7)}\n"
             f"align_mode = \"{config_dict.get('align_mode', 'center')}\"\n"
             f"draw_background = {'true' if config_dict.get('draw_background', True) else 'false'}\n"
+            f"valor_de_sleep = \"{config_dict.get('valor_de_sleep', 'Y')}\"\n"
         )
         CONFIG_CICLAR_PATH.write_text(contenido, encoding="utf-8")
     except Exception as e:
@@ -1030,15 +1076,17 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
         hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
         vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
 
-        r, g, b = 0, 0, 0
+        # Obtenemos siempre el color de la zona para calcular la luminancia
+        small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
+        pixel = small.getpixel((0, 0))
+        r, g, b = pixel[0], pixel[1], pixel[2]
 
+        # Solo dibujamos el rectángulo semitransparente si el usuario activó BOXES
         if draw_background:
-            small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
-            pixel = small.getpixel((0, 0))
-            r, g, b = pixel[0], pixel[1], pixel[2]
             draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
     else:
         hpos, vpos, box_h, line_h = 0, 0, 0, 0
+        r, g, b = 0, 0, 0  # Valores por defecto de seguridad
         
     luminancia = (0.299 * r + 0.587 * g + 0.114 * b)
 
@@ -1051,7 +1099,6 @@ def generate_composite_image(bg_path, quote_text, author_text, font_path=None, f
 
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
-
 
     # --- 4. FUNCIÓN DE ALINEACIÓN CON EL // 2 CORREGIDO ---
     def calcular_x(line_text, align_type):
@@ -1343,34 +1390,35 @@ class PreviewDialog(Gtk.Dialog):
         self.combo_fonts.pack_start(renderer_text, True)
         self.combo_fonts.add_attribute(renderer_text, "text", 1)
         
-        # Seleccionar la fuente actual guardada si existe en la lista
+        # Seleccionar la fuente actual según la configuración inicial
+        target_path = self.font_path if getattr(self, "misma_fuente", True) else FONTE_DEFAULT_FALLBACK
         if SYSTEM_FONTS:
             found_index = 0
             for i, row in enumerate(self.font_store):
-                # Verificamos si la ruta de la fila coincide con self.font_path
-                # Evitamos usar len() sobre el objeto row de PyGObject
                 try:
-                    if row[2] == self.font_path:
+                    if row[2] == target_path:
                         found_index = i
                         break
                 except IndexError:
                     pass
             self.combo_fonts.set_active(found_index)
 
-        # Mantenemos el combo SIEMPRE HABILITADO para que puedas abrir la lista cuando quieras
+        # El ComboBox permanece activo, pero podemos condicionar su sensibilidad si se desea
         self.combo_fonts.set_sensitive(True)
+        
+        # Conectamos las señales evitando disparos accidentales al inicializar
         self.combo_fonts.connect("changed", self.on_font_changed)
         
         box_font.pack_start(self.combo_fonts, False, False, 0)
         
         # El CheckButton de Misma fuente
         self.chk_misma_fuente = Gtk.CheckButton(label="Misma fuente")
-        self.chk_misma_fuente.set_active(self.misma_fuente)
+        self.chk_misma_fuente.set_active(getattr(self, "misma_fuente", True))
         self.chk_misma_fuente.connect("toggled", self.on_config_misma_fuente_toggled)
         box_font.pack_start(self.chk_misma_fuente, False, False, 0)
 
         top_bar.pack_start(box_font, False, False, 0)
-
+        
         # 3. Los empaquetas en tu contenedor inferior del Preview
         font_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         
@@ -1562,15 +1610,13 @@ class PreviewDialog(Gtk.Dialog):
         tree_iter = combo.get_active_iter()
         if tree_iter is not None:
             model = combo.get_model()
-            font_path = model[tree_iter][2]  # Ruta completa de la fuente
-            if font_path and os.path.exists(font_path):
-                self.font_path = font_path
-                self.misma_fuente = False
-                if hasattr(self, "chk_misma_fuente"):
-                    self.chk_misma_fuente.set_active(False)
-                
-                guardar_config_fuentes(self.misma_fuente, self.font_path)
-                self.renderizar_vista_previa()
+            font_path = model[tree_iter][2]
+            self.font_path = font_path
+        
+        # Si "misma_fuente" está activo, guardamos inmediatamente la nueva ruta elegida
+        if getattr(self, "misma_fuente", True):
+            guardar_config_fuentes(self.misma_fuente, font_path)
+
 
     def on_size_changed(self, spin):
         self.font_size = int(spin.get_value())
@@ -1775,11 +1821,32 @@ class PreviewDialog(Gtk.Dialog):
             except Exception:
                 color_scheme = "default"
 
+            # 1. Actualizar CONFIG_CICLAR_PATH con valor_de_sleep = N al usar gsettings
+            if CONFIG_CICLAR_PATH.exists():
+                try:
+                    lineas = CONFIG_CICLAR_PATH.read_text(encoding="utf-8").splitlines()
+                    nuevas_lineas = []
+                    encontrado = False
+                    
+                    for l in lineas:
+                        if l.strip().lower().startswith("valor_de_sleep"):
+                            nuevas_lineas.append("valor_de_sleep = N")
+                            encontrado = True
+                        else:
+                            nuevas_lineas.append(l)
+                            
+                    if not encontrado:
+                        nuevas_lineas.append("valor_de_sleep = N")
+                        
+                    CONFIG_CICLAR_PATH.write_text("\n".join(nuevas_lineas) + "\n", encoding="utf-8")
+                except Exception as e:
+                    print(f"Error actualizando ciclar_render.config a N: {e}")
+
             key = "picture-uri-dark" if "dark" in color_scheme.lower() else "picture-uri"
             cmd_wallpaper = f'gsettings set org.gnome.desktop.background {key} "{file_uri}"'
             subprocess.Popen(cmd_wallpaper, shell=True)
 
-            cmd_history = "sh /usr/share/wallpaper_manager/w_m/actions/ir-prev.sh"
+            cmd_history = "sleep 0.5 && sh /usr/share/wallpaper_manager/w_m/actions/ir-prev.sh"
             subprocess.Popen(cmd_history, shell=True)
 
             self.mostrar_mensaje_url(
@@ -2809,6 +2876,10 @@ Comment=Auto ciclar wallpaper con citas
                         self.ciclar_config["ciclar"] = True
                         self.ciclar_config["directorio"] = getattr(self, 'directorio_actual', obtener_directorio_defecto())
                         
+                        # Mantener o establecer valor_de_sleep por defecto en Y cuando se configura el ciclo                        
+                        if "valor_de_sleep" not in self.ciclar_config:
+                            self.ciclar_config["valor_de_sleep"] = "Y"
+                        
                         # Y capturamos las propiedades visuales actuales de la sesión
                         self.ciclar_config["font_path"] = getattr(self, 'font_path', str(FONTE_DEFAULT_FALLBACK))
                         self.ciclar_config["font_size"] = getattr(self, 'font_size', 42)
@@ -2818,12 +2889,41 @@ Comment=Auto ciclar wallpaper con citas
                         self.ciclar_config["align_mode"] = getattr(self, 'align_mode', 'center')
                         self.ciclar_config["draw_background"] = getattr(self, 'draw_background', True)
                         
+                        # 1. Leer PRIMERO del archivo qué puso el cambio de fondo
+                        hacer_sleep = False
+                        if CONFIG_CICLAR_PATH.exists():
+                            try:
+                                texto_config = CONFIG_CICLAR_PATH.read_text(encoding="utf-8")
+                                for linea in texto_config.splitlines():
+                                    if "valor_de_sleep" in linea and "=" in linea:
+                                        val = linea.split("=", 1)[1].strip().strip('"').strip("'").upper()
+                                        if val == "N":
+                                            hacer_sleep = True
+                                        elif val == "Y":
+                                            hacer_sleep = False
+                                        # Actualizamos la memoria con lo que realmente estaba en el archivo
+                                        self.ciclar_config["valor_de_sleep"] = val
+                                        break
+                            except Exception as e:
+                                print(f"Error leyendo valor_de_sleep: {e}")
+                        
+                        # 2. AHORA SÍ guardas la configuración sin pisotear el archivo con un valor viejo
                         guardar_ciclar_config(self.ciclar_config)
-
-                        # Lanzar el script ciclar.sh en segundo plano
+                        
+                        # 3. Lanzar el proceso
+                        tiempo_espera = self.ciclar_config.get("tiempo", 5)
                         script_ciclar = BASE_DIR / "Buenas_imágenes_citas" / "ciclar.sh"
+                        
                         if script_ciclar.exists():
-                            subprocess.Popen(["bash", str(script_ciclar)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            if hacer_sleep:
+                                # "N" = sleep antes de arrancar
+                                cmd_bg = f"sleep $(( {tiempo_espera} * 60 )) && bash '{script_ciclar}' &"
+                            else:
+                                # "Y" = sin sleep
+                                cmd_bg = f"bash '{script_ciclar}' &"
+                                
+                            subprocess.Popen(cmd_bg, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
             except Exception as e:
                 print(f"Error al desplegar Yad al cerrar: {e}")
 

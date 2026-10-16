@@ -158,28 +158,35 @@ def generate_composite_image(bg_path, quote_text, author_text, config):
     if all_lines:
         bbox = draw_dummy.textbbox((0, 0), "Ag", font=font)
         line_h = bbox[3] - bbox[1] + 8
+        
+        # Sumamos todas las líneas reales para que la caja no corte al autor por abajo
         total_lines_count = len(lines_quote) + len(author_lines_wrapped)
         box_h = (total_lines_count * line_h) + 50
 
-        # Márgenes proporcionales basados en las dimensiones reales de la foto
-        margin = 40
+        margin = 20
         hpos = max(margin, min(margin + offset_x, canvas_w - box_w - margin))
         vpos = max(margin, min(margin + offset_y, canvas_h - box_h - margin))
-        
-        if draw_background:
-            small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
-            pixel = small.getpixel((0, 0))
-            r, g, b = pixel[0], pixel[1], pixel[2]
-            draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
 
-    # Contraste automático según la luminancia del fondo
-    luminancia = (0.299 * r + 0.587 * g + 0.114 * b)
-    if luminancia > 140:
-        color_texto = (0, 0, 0, 255)
-        color_sombra = (255, 255, 255, 180)
+        # Obtenemos siempre el color de la zona para calcular la luminancia
+        small = bg_image.resize((1, 1), Image.Resampling.LANCZOS).convert("RGB")
+        pixel = small.getpixel((0, 0))
+        r, g, b = pixel[0], pixel[1], pixel[2]
+
+        # Solo dibujamos el rectángulo semitransparente si el usuario activó BOXES
+        if draw_background:
+            draw_overlay.rectangle([hpos, vpos, hpos + box_w, vpos + box_h], fill=(r, g, b, 150))
     else:
-        color_texto = (255, 255, 255, 255)
-        color_sombra = (0, 0, 0, 180)
+        hpos, vpos, box_h, line_h = 0, 0, 0, 0
+        r, g, b = 0, 0, 0  # Valores por defecto de seguridad
+        
+    luminancia = (0.299 * r + 0.587 * g + 0.114 * b)
+
+    if luminancia > 140:
+        color_texto = (0, 0, 0, 255)         # Negro para fondos claros
+        color_sombra = (255, 255, 255, 180)  # Sombra blanca para contraste
+    else:
+        color_texto = (255, 255, 255, 255)   # Blanco para fondos oscuros
+        color_sombra = (0, 0, 0, 180)        # Sombra negra habitual
 
     result = Image.alpha_composite(bg_image.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(result)
