@@ -6,6 +6,19 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import subprocess
 
+# Cargar tipografía desde fonts.config si existe, de lo contrario usar fallback
+FONT_PATH = "/usr/share/wallpaper_manager/Buenas_imágenes_citas/fonts/C059-BdIta.t1"
+CONFIG_FONTS = Path("/usr/share/wallpaper_manager/Buenas_imágenes_citas/fonts.config")
+
+if CONFIG_FONTS.exists():
+    try:
+        data = json.loads(CONFIG_FONTS.read_text(encoding="utf-8"))
+        ruta_guardada = data.get("font_path")
+        if ruta_guardada and Path(ruta_guardada).exists():
+            FONT_PATH = ruta_guardada
+    except Exception:
+        pass
+
 def obtener_directorio_imagenes():
     try:
         res = subprocess.run(["xdg-user-dir", "PICTURES"], capture_output=True, text=True, check=True)

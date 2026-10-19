@@ -6,6 +6,7 @@ import random
 import re
 import sys
 import ast
+import socket
 import shutil
 import subprocess
 import tempfile
@@ -85,6 +86,36 @@ def cargar_config_idioma():
             pass
     return "es"
 
+def hay_internet(host="8.8.8.8", puerto=53, timeout=0.5):
+    """Verifica si hay conexión a internet rápidamente."""
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, puerto))
+        return True
+    except socket.error:
+        return False
+
+def cargar_imagenes_async(self):
+        # 1. VERIFICACIÓN INICIAL: Si el switch está en OFF o NO HAY INTERNET, carga locales directamente
+        if (hasattr(self, 'switch_online') and not self.switch_online.get_active()) or not hay_internet():
+            if not hay_internet():
+                self.lbl_status.set_text("Sin internet: Cargando imágenes locales (Modo OFFLINE)...")
+            else:
+                self.lbl_status.set_text("Cargando imágenes locales...")
+                
+            items_locales = self.cargar_imagenes_locales(cantidad=25)
+            self.imagenes_cache = items_locales
+            self.actualizar_flowbox_con_items(items_locales)
+            self.lbl_status.set_text(f"Cargadas {len(items_locales)} imágenes locales.")
+            return
+
+# Al momento de intentar traducir o buscar online:
+if hay_internet():
+    # Ejecutar código online (traducciones, APIs, etc.)
+    pass
+else:
+    # Modo OFFLINE: usar idioma local original (ej. 'es' o 'en') sin traducir
+    print("Modo OFFLINE activado: Omitiendo traducción online.")
 
 def guardar_config_fuentes(misma_fuente, font_path, fuente_sesion=None):
     # Convertimos a string por si vienen como objetos PosixPath
@@ -194,9 +225,12 @@ def cargar_ciclar_config():
     default_config = {
         "ciclar": False,
         "cita": True,
+        "image": True,
+        "image_state": True,
         "autor": "Prem Rawat",
         "tiempo": 5,
-        "directorio": obtener_directorio_defecto()
+        "directorio": obtener_directorio_defecto(),
+        "font_path": str(FONTE_DEFAULT_FALLBACK)
     }
 
     if not CONFIG_CICLAR_PATH.exists():
@@ -205,6 +239,16 @@ def cargar_ciclar_config():
 
     config = default_config.copy()
     try:
+        # 1. Leer primero si hay una fuente guardada en fonts.config
+        if CONFIG_FONTS.exists():
+            try:
+                f_data = json.loads(CONFIG_FONTS.read_text(encoding="utf-8"))
+                if f_data.get("font_path") and os.path.exists(f_data.get("font_path")):
+                    config["font_path"] = f_data.get("font_path")
+            except Exception:
+                pass
+
+        # 2. Leer las configuraciones de ciclar_render.config
         lineas = CONFIG_CICLAR_PATH.read_text(encoding="utf-8").splitlines()
         for linea in lineas:
             linea_limpia = linea.strip()
@@ -218,6 +262,10 @@ def cargar_ciclar_config():
                 config["ciclar"] = valor.lower() in ["true", "1", "sí", "si"]
             elif clave == "cita":
                 config["cita"] = valor.lower() in ["true", "1", "sí", "si"]
+            elif clave in ["image", "image_state"]:
+                val_b = valor.lower() in ["true", "1", "sí", "si"]
+                config["image"] = val_b
+                config["image_state"] = val_b
             elif clave == "autor":
                 config["autor"] = valor
             elif clave == "tiempo":
@@ -227,6 +275,12 @@ def cargar_ciclar_config():
                     pass
             elif clave == "directorio":
                 config["directorio"] = valor
+            elif clave == "font_path" and valor and os.path.exists(valor):
+                # Solo se sobrescribe si no se leyó una más específica de fonts.config
+                if config["font_path"] == str(FONTE_DEFAULT_FALLBACK):
+                    config["font_path"] = valor
+            elif clave == "ultima_imagen":
+                config["ultima_imagen"] = valor
     except Exception as e:
         print(f"Error al leer ciclar_render.config: {e}")
 
@@ -239,9 +293,20 @@ def guardar_ciclar_config(config_dict):
     """
     try:
         CONFIG_CICLAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Evaluamos y definimos las variables de imagen de forma limpia y segura
+        val_image_bool = config_dict.get('image', config_dict.get('image_state', True))
+        if isinstance(val_image_bool, str):
+            val_image_str = 'true' if val_image_bool.upper() in ['TRUE', '1', 'SI', 'SÍ', 'ON'] else 'false'
+        else:
+            val_image_str = 'true' if val_image_bool else 'false'
+
         contenido = (
             f"ciclar = {'true' if config_dict.get('ciclar', False) else 'false'}\n"
             f"cita = {'true' if config_dict.get('cita', True) else 'false'}\n"
+            f"image = {val_image_str}\n"
+            f"image_state = {val_image_str}\n"
+            f"ultima_imagen = \"{config_dict.get('ultima_imagen', '')}\"\n"
             f"autor = \"{config_dict.get('autor', 'Prem Rawat')}\"\n"
             f"tiempo = {config_dict.get('tiempo', 5)}\n"
             f"directorio = \"{config_dict.get('directorio', obtener_directorio_defecto())}\"\n"
@@ -1300,6 +1365,33 @@ class PreviewDialog(Gtk.Dialog):
                 self.autor_otro_actual,
             )
 
+        # --- GUARDAR EL AUTOR REAL AL PONER DE WALLPAPER ---        
+        autor_para_guardar = self.cita_data.get("Autor", "").strip()        
+        if autor_para_guardar:        
+            autor_para_guardar = autor_para_guardar.split(" (")[0]        
+            self.main_app.ciclar_config["autor"] = autor_para_guardar        
+
+        # Determinar una ruta persistente para 'ultima_imagen'
+        img_path_actual = self.item_data.get("local_path", "")
+        
+        # Si no es un archivo local permanente, verificamos si tenemos la versión completa descargada
+        if not img_path_actual or "/tmp/" in img_path_actual:
+            temp_full = TEMP_DIR / f"full_{self.item_data.get('id', 'imagen')}.jpg"
+            if temp_full.exists():
+                # Opcional: la copiamos a SAVE_DIR para que sea persistente ante reinicios de /tmp
+                destino_persistente = SAVE_DIR / f"ultima_sesion_{self.item_data.get('id', 'imagen')}.jpg"
+                try:
+                    if not destino_persistente.exists():
+                        shutil.copy2(temp_full, destino_persistente)
+                    img_path_actual = str(destino_persistente)
+                except Exception:
+                    img_path_actual = str(temp_full)
+            else:
+                img_path_actual = self.item_data.get("full_url", "")
+
+        self.main_app.ciclar_config["ultima_imagen"] = img_path_actual
+        guardar_ciclar_config(self.main_app.ciclar_config)
+
         main_box = self.get_content_area()
         main_box.set_spacing(6)
         main_box.set_margin_top(8)
@@ -1871,6 +1963,14 @@ class PreviewDialog(Gtk.Dialog):
         if not self.hd_image_path.exists():
             return
         try:
+            # --- GUARDAR EL AUTOR REAL DE LA CITA ACTIVA ANTES DE APLICAR ---
+            autor_real = self.cita_data.get("Autor", "").strip()
+            if autor_real and autor_real.lower() not in ["autor desconocido", ""]:
+                # Limpiamos sufijos si los tuviera
+                autor_real = autor_real.split(" (")[0].strip()
+                self.main_app.ciclar_config["autor"] = autor_real
+                guardar_ciclar_config(self.main_app.ciclar_config)
+                
             comp = generate_composite_image(
                 str(self.hd_image_path),
                 self.cita_data.get("Cita", "") if self.main_app.citas_activas else "",
@@ -1919,10 +2019,16 @@ class PreviewDialog(Gtk.Dialog):
     
         url_cita = self.cita_data.get('URL', '')
         url_img = self.item_data.get('source_url', '')
-    
+ 
+        # Si la URL de la imagen es una ruta local del sistema, la convertimos a URI file:// para Pango
+        if url_img.startswith("/"):
+            url_img_uri = Path(url_img).as_uri()
+        else:
+            url_img_uri = url_img
+
         # Construimos los links en formato Pango Markup
         link_cita = f'<a href="{esc(url_cita)}">{esc(url_cita)}</a>' if url_cita else 'N/A'
-        link_img = f'<a href="{esc(url_img)}">{esc(url_img)}</a>' if url_img else 'N/A'
+        link_img = f'<a href="{esc(url_img_uri)}">{esc(url_img)}</a>' if url_img else 'N/A'
     
         texto = (
             f"• <b>Cita:</b> {esc(self.cita_data.get('Cita', 'N/A'))}\n"
@@ -1933,7 +2039,55 @@ class PreviewDialog(Gtk.Dialog):
             f"• <b>URL Imagen:</b> {link_img}"
         )
     
-        self.mostrar_mensaje_url("Metadatos de la Imagen y Cita", texto)
+        self.mostrar_mensaje_url_con_apertura("Metadatos de la Imagen y Cita", texto)
+
+    def mostrar_mensaje_url_con_apertura(self, titulo, texto, message_type=Gtk.MessageType.INFO):
+        dialog = Gtk.MessageDialog(
+            transient_for=self, flags=0, message_type=message_type,
+            buttons=Gtk.ButtonsType.OK, text=titulo
+        )
+        
+        # Aplicar Pango Markup directamente al texto secundario
+        dialog.format_secondary_markup(texto)
+        
+        # Obtener la etiqueta secundaria y habilitar la activación de enlaces de forma nativa
+        label_secundario = dialog.get_message_area().get_children()[1]
+        if isinstance(label_secundario, Gtk.Label):
+            label_secundario.set_selectable(True)
+            label_secundario.set_use_markup(True)
+            # Conectamos la señal para abrir con Nautilus / xdg-open u Handler personalizado
+            label_secundario.connect("activate-link", self.on_enlace_activado)
+    
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    def on_enlace_activado(self, label, uri):
+        """Captura el clic en los enlaces Pango y abre la ruta o URL con Nautilus / xdg-open"""
+        try:
+            # Limpiamos prefijos extra por si acaso
+            target = uri
+            if target.startswith("file://"):
+                target = urllib.parse.unquote(target[7:]) # Decodifica espacios y caracteres especiales
+
+            # Verificamos si es un archivo o directorio local existente
+            if target.startswith("/") or os.path.exists(target):
+                # Abrir la carpeta contenedora y seleccionar el archivo con Nautilus (o abrir el archivo directamente)
+                # Usar "--select" selecciona el archivo en Nautilus en lugar de solo abrir la carpeta padre
+                subprocess.Popen(["nautilus", "--select", target])
+            else:
+                # Si es una URL web estándar (http/https), abrir con el navegador predeterminado
+                from gi.repository import Gio
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+        except Exception as e:
+            print(f"No se pudo abrir el enlace automáticamente: {e}")
+            # Respaldo con xdg-open
+            try:
+                subprocess.Popen(["xdg-open", uri])
+            except Exception as ex:
+                print(f"Error crítico al abrir enlace: {ex}")
+        
+        return True  # Indica a GTK que el evento del enlace fue manejado
 
 
 class WallpaperManagerWindow(Gtk.Window):
@@ -2010,7 +2164,7 @@ class WallpaperManagerWindow(Gtk.Window):
         bottom_bar.pack_end(self.chk_preguntar, False, False, 0)
         
         # --- BOTÓN ABRIR CARPETA ---
-        self.btn_open_folder = Gtk.Button(label=" 📂 +\n Folder ")
+        self.btn_open_folder = Gtk.Button(label=" 📂  ➕\n Folder ")
         self.btn_open_folder.set_sensitive(False)  # Deshabilitado por defecto (Modo ON)
         self.btn_open_folder.connect("clicked", self.on_btn_open_folder_clicked)
         
@@ -2018,13 +2172,26 @@ class WallpaperManagerWindow(Gtk.Window):
         bottom_bar.pack_end(self.btn_open_folder, False, False, 0)
 
         # --- SWITCH ON / OFF (Insertado en bottom_bar a la derecha) ---
-        lbl_switch = Gtk.Label(label=" ONLINE 🖼️ \n OFFLINE 📂 ")
         self.switch_online = Gtk.Switch()
-        self.switch_online.set_active(True)  # ON por defecto
+        
+        conexion_disponible = hay_internet(timeout=1)
+        
+        self.switch_online.set_active(conexion_disponible)  # ON por defecto
         self.switch_online.connect("state-set", self.on_switch_online_toggled)
 
+        btn_offline = Gtk.Button(label=" ONLINE 🖼️ \n OFFLINE 📂 ")
+        btn_offline.set_tooltip_text("Clic para forzar modo offline y cargar locales")
+        
+        def al_pulsar_boton_offline(button):
+            estado_actual = self.switch_online.get_active()
+            self.switch_online.set_active(not estado_actual)
+
+        btn_offline.connect("clicked", al_pulsar_boton_offline)
+
+        # Los empaquetamos juntos a la derecha de la barra inferior
         bottom_bar.pack_end(self.switch_online, False, False, 0)
-        bottom_bar.pack_end(lbl_switch, False, False, 0)
+        bottom_bar.pack_end(btn_offline, False, False, 0)
+
         btn_refresh = Gtk.Button(label="🔄 Cargar más Imágenes")
         btn_refresh.connect("clicked", lambda w: self.cargar_imagenes_async())
         bottom_bar.pack_end(btn_refresh, False, False, 0)
@@ -2102,6 +2269,16 @@ class WallpaperManagerWindow(Gtk.Window):
 
         return False
 
+    def forzar_modo_offline(self):
+        """Pone el switch en OFF y carga las imágenes locales de inmediato"""
+        if hasattr(self, 'switch_online'):
+            self.switch_online.set_active(False)  # Apaga el switch visualmente
+        
+        self.lbl_status.set_text("Modo OFFLINE activado: Cargando imágenes locales...")
+        items_locales = self.cargar_imagenes_locales(cantidad=25)
+        self.imagenes_cache = items_locales
+        self.actualizar_flowbox_con_items(items_locales)
+        self.lbl_status.set_text(f"Cargadas {len(items_locales)} imágenes locales (OFFLINE).")
 
     def on_btn_open_folder_clicked(self, widget):
         """Abre un diálogo de selección de carpeta si estamos en modo Offline"""
@@ -2598,22 +2775,25 @@ class WallpaperManagerWindow(Gtk.Window):
         return items
 
     def cargar_imagenes_async(self):
-        # 1. VERIFICACIÓN INICIAL: Si está en OFF, carga locales de inmediato y no abre hilos
-        if hasattr(self, 'switch_online') and not self.switch_online.get_active():
-            self.lbl_status.set_text("Cargando imágenes locales...")
+        # 1. VERIFICACIÓN INICIAL: Si está en OFF o NO hay internet, carga locales de inmediato
+        if (hasattr(self, 'switch_online') and not self.switch_online.get_active()) or not hay_internet():
+            if not hay_internet():
+                self.lbl_status.set_text("Sin internet: Cargando imágenes locales (Modo OFFLINE)...")
+            else:
+                self.lbl_status.set_text("Cargando imágenes locales...")
+                
             items_locales = self.cargar_imagenes_locales(cantidad=25)
             self.imagenes_cache = items_locales
             self.actualizar_flowbox_con_items(items_locales)
             self.lbl_status.set_text(f"Cargadas {len(items_locales)} imágenes locales.")
             return
 
-        # 2. MODO ONLINE (Si el switch está activado)
+        # 2. MODO ONLINE (Si hay internet y el switch está activo)
         self.cancel_download_event.clear()
         self.lbl_status.set_text("Obteniendo aleatoriamente 25 fondos de varios tags y sitios...")
         for child in self.flowbox.get_children():
             self.flowbox.remove(child)
 
-        # Tomamos los tags activos
         tags_activos = [tag for tag, chk in self.chk_estilos.items() if chk.get_active()]
         if not tags_activos:
             tags_activos = ["nature"]
@@ -2623,12 +2803,13 @@ class WallpaperManagerWindow(Gtk.Window):
             vistos = set()
             sitios = ["wallhaven", "pixabay"]
 
-            # Bucle para recolectar de forma aleatoria hasta llegar a 25
             intentos = 0
             while len(items) < 25 and intentos < 60:
-                # 3. VERIFICACIÓN DE CANCELACIÓN EN CADA ITERACIÓN
                 if self.cancel_download_event.is_set():
-#                    print("Descarga cancelada por el usuario (Switch pasó a OFF).")
+                    break
+
+                # Doble validación de red por si se cae en mitad del bucle
+                if not hay_internet():
                     break
 
                 intentos += 1
@@ -2637,11 +2818,10 @@ class WallpaperManagerWindow(Gtk.Window):
 
                 if sitio_actual == "wallhaven":
                     try:
-                        # Usamos orden aleatorio en la API de Wallhaven si lo soporta, o barajamos el resultado
                         params = {"q": tag_actual, "sorting": "random", "purity": "100", "apikey": WALLHAVEN_API_KEY}
                         api_url = f"https://wallhaven.cc/api/v1/search?{urllib.parse.urlencode(params)}"
                         req = urllib.request.Request(api_url, headers=HTTP_HEADERS)
-                        with urllib.request.urlopen(req, timeout=8) as resp:
+                        with urllib.request.urlopen(req, timeout=5) as resp:
                             if resp.status == 200:
                                 data = json.loads(resp.read().decode("utf-8"))
                                 pool_wh = data.get("data", [])
@@ -2654,15 +2834,19 @@ class WallpaperManagerWindow(Gtk.Window):
                                             vistos.add(item["id"])
                                             thumb_path = TEMP_DIR / f"thumb_{item['id']}.jpg"
                                             if not thumb_path.exists():
-                                                descargar_archivo(item["thumbs"]["small"], thumb_path)
+                                                try:
+                                                    descargar_archivo(item["thumbs"]["small"], thumb_path)
+                                                except Exception:
+                                                    continue
                                             items.append({
                                                 "id": item["id"],
                                                 "thumb_path": str(thumb_path),
                                                 "full_url": item["path"],
                                                 "source_url": item.get("url", item["path"])
                                             })
-                    except Exception as e:
-                        print(f"Aviso Wallhaven ({tag_actual}): {e}")
+                    except Exception:
+                        # Silenciamos el error en consola para que no ensucie la terminal offline
+                        pass
 
                 elif sitio_actual == "pixabay":
                     try:
@@ -2674,15 +2858,15 @@ class WallpaperManagerWindow(Gtk.Window):
                             if p_item["id"] not in vistos:
                                 vistos.add(p_item["id"])
                                 items.append(p_item)
-                    except Exception as e:
-                        print(f"Aviso Pixabay ({tag_actual}): {e}")
+                    except Exception:
+                        pass
 
-            # Respaldo con Picsum de manera aleatoria si aún faltan elementos para los 25 exactos
+            # Si faltaron elementos o no hay internet, cargamos de respaldo local de inmediato
             if len(items) < 25:
                 faltantes = 25 - len(items)
-                items.extend(self.obtener_imagenes_respaldo_picsum(cantidad=faltantes))
+                items_locales_extra = self.cargar_imagenes_locales(cantidad=faltantes)
+                items.extend(items_locales_extra)
 
-            # Mezcla final de todo el conjunto y corte estricto a 25
             random.shuffle(items)
             items = items[:25]
             GLib.idle_add(self.actualizar_grid_miniaturas, items)
@@ -2719,10 +2903,13 @@ class WallpaperManagerWindow(Gtk.Window):
         if not item_data:
             return
     
+        # Capturamos 'self' en una variable local o definimos el worker correctamente
+        ventana_principal = self
+
         def tarea_abrir_preview():
             autor_otro_override = ""
             
-            if self.citas_activas and self.autor_seleccionado == "otros":
+            if ventana_principal.citas_activas and ventana_principal.autor_seleccionado == "otros":
                 rutas_dialog = [
                     IMAGENES_QUOTES_DIR / "author_dialog.py",
                 ]
@@ -2737,9 +2924,13 @@ class WallpaperManagerWindow(Gtk.Window):
                             timeout=15
                         )
                         
-                        # CASO 1: El usuario CERRÓ o CANCELÓ la ventana (código de salida distinto de 0)
+                        # CASO 1: El usuario CERRÓ o CANCELÓ la ventana
                         if res.returncode != 0:
-                            print("Diálogo de autor cerrado o cancelado por el usuario. Abortando búsqueda.")
+                            print("Diálogo de autor cerrado o cancelado. Se asigna 0.")
+                            autor_otro_override = "0"
+                            self.ciclar_config["autor"] = "0"
+                            guardar_ciclar_config(self.ciclar_config)
+                            GLib.idle_add(ventana_principal._abrir_dialogo_preview, item_data, autor_otro_override)
                             return
 
                         # CASO 2: Confirmó (returncode == 0), procesamos la salida
@@ -2759,20 +2950,43 @@ class WallpaperManagerWindow(Gtk.Window):
                             # Se ingresó/seleccionó un autor específico
                             autor_otro_override = validas[-1]
                         else:
-                            # Confirmó pero dejó el campo VACÍO: elegimos uno aleatorio
-                            autor_otro_override = random.choice(LISTA_OTROS_AUTORES)
-                            print(f"Campo vacío confirmado. Autor aleatorio seleccionado: {autor_otro_override}")
+                            # Confirmó pero dejó el campo VACÍO: asignamos "0"
+                            autor_otro_override = "0"
+                            print("Campo vacío confirmado. Se asigna 0.")
 
                     except Exception as e:
                         print(f"Error en dialogo autor: {e}")
+                        autor_otro_override = "0"
+                        GLib.idle_add(ventana_principal._abrir_dialogo_preview, item_data, autor_otro_override)
                         return
 
                 # Resguardo por si el script no existía
                 if not autor_otro_override:
-                    autor_otro_override = random.choice(LISTA_OTROS_AUTORES)
+                    autor_otro_override = "0"
 
-            # Si todo está bien, pasamos a abrir la vista previa
-            GLib.idle_add(self._abrir_dialogo_preview, item_data, autor_otro_override)
+            # SI EL AUTOR ES "0", SELECCIONAR UN AUTOR ALEATORIO DEL JSON ANTES DE ABRIR
+            if autor_otro_override == "0":
+                try:
+                    json_db_path = IMAGENES_QUOTES_DIR / "autores_completos_db.json"
+                    if json_db_path.exists():
+                        with open(json_db_path, "r", encoding="utf-8") as f:
+                            db_data = json.load(f)
+                            valores = db_data.values() if isinstance(db_data, dict) else db_data
+                            nombres = [e.get("nombre") for e in valores if isinstance(e, dict) and e.get("nombre")]
+                            
+                            # Excluir los principales si es necesario
+                            excluidos = {"Prem Rawat", "Sadhguru", "Sri Sri Ravi Shankar", "Dr. Siva P."}
+                            nombres_filtrados = [n for n in nombres if n not in excluidos]
+                            
+                            if nombres_filtrados:
+                                autor_otro_override = random.choice(nombres_filtrados)
+                                print(f"Autor aleatorio seleccionado desde JSON: {autor_otro_override}")
+                except Exception as e:
+                    print(f"Error seleccionando autor aleatorio del JSON: {e}")
+                    autor_otro_override = "Albert Einstein" # Respaldo final de seguridad
+
+            # Si todo está bien, pasamos a abrir la vista previa con el autor ya resuelto
+            GLib.idle_add(ventana_principal._abrir_dialogo_preview, item_data, autor_otro_override)
     
         # Lanzamos en hilo secundario para evitar congelar GTK
         threading.Thread(target=tarea_abrir_preview, daemon=True).start()
@@ -2781,7 +2995,6 @@ class WallpaperManagerWindow(Gtk.Window):
         dialog = PreviewDialog(self, item_data, autor_otro_override=autor_otro_override)
         dialog.run()
         
-        # --- AQUÍ ESTÁ EL PUENTE QUE FALTABA COPIAR ---
         self.font_path = getattr(dialog, 'font_path', self.font_path)
         self.font_size = getattr(dialog, 'font_size', self.font_size)
         self.offset_x = getattr(dialog, 'offset_x', self.offset_x)
@@ -2822,7 +3035,7 @@ class WallpaperManagerWindow(Gtk.Window):
                 "sadhguru": "Sadhguru", 
                 "siva": "Dr. Siva P.", 
                 "ravi_shankar": "Sri Sri Ravi Shankar", 
-                "otros": "Otros Autores" 
+                "otros": "0" 
             } 
             autor_actual = nombres_autores_map.get(autor_crudo.lower(), autor_crudo.replace("_", " ").title()) 
             image_activa = self.switch_online.get_active() 
@@ -2845,6 +3058,7 @@ class WallpaperManagerWindow(Gtk.Window):
                     if len(partes) >= 5:
                         nuevo_tiempo = partes[0].strip() or str(tiempo_actual)
                         nueva_image = partes[1].strip()
+                        es_image_activo = nueva_image.upper() in ["TRUE", "1", "SI", "SÍ", "ON"]
                         nueva_quote = partes[2].strip()
                         nuevo_autostart = partes[3].strip()
                         nuevo_lang = partes[4].strip() or idioma_actual
@@ -2871,9 +3085,11 @@ Comment=Auto ciclar wallpaper con citas
                         # Guardamos los datos generales del ciclo
                         self.ciclar_config["tiempo"] = int(float(nuevo_tiempo)) if nuevo_tiempo.replace('.','',1).isdigit() else 5
                         self.ciclar_config["cita"] = nueva_quote.upper() in ["TRUE", "1", "SI", "SÍ"]
+                        self.ciclar_config["ciclar"] = nueva_image 
+                        self.ciclar_config["image"] = es_image_activo
+                        self.ciclar_config["image_state"] = nueva_image
                         self.ciclar_config["autor"] = autor_actual
                         self.ciclar_config["lang"] = nuevo_lang
-                        self.ciclar_config["ciclar"] = True
                         self.ciclar_config["directorio"] = getattr(self, 'directorio_actual', obtener_directorio_defecto())
                         
                         # Mantener o establecer valor_de_sleep por defecto en Y cuando se configura el ciclo                        
