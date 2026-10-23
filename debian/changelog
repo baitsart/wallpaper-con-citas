@@ -1,4 +1,8 @@
-wallpaper-con-citas (1.3.0) resolute; urgency=medium
+wallpaper-con-citas (1.3.1) resolute; urgency=medium
+
+  * A minor detail: the window had CSS colors configured for "dark mode," and in light mode, the text color contrast on the buttons was lost.
+  * Un mínimo detalle: la ventana tenía configurados colores CSS para el «modo oscuro», y en el modo claro se perdía el contraste del color del texto en los botones.
+  
   * On final releases.
   * Improvements: Tapping a URI that points to a local file in "OFFLINE", now opens it in the file browser.
   * Fixed an issue with cycling (with or without an image).

@@ -2094,6 +2094,9 @@ class WallpaperManagerWindow(Gtk.Window):
     def __init__(self):
         super().__init__()
         
+        # Asignar una clase CSS exclusiva para la ventana principal
+        self.get_style_context().add_class("main-window")
+
         header_bar = Gtk.HeaderBar()
         header_bar.set_show_close_button(True)
         header_bar.set_title("Wallpaper Manager — Citas & Wallpapers")
@@ -2164,7 +2167,7 @@ class WallpaperManagerWindow(Gtk.Window):
         bottom_bar.pack_end(self.chk_preguntar, False, False, 0)
         
         # --- BOTÓN ABRIR CARPETA ---
-        self.btn_open_folder = Gtk.Button(label=" 📂  ➕\n Folder ")
+        self.btn_open_folder = Gtk.Button(label=" 📂   ＋\n Folder ")
         self.btn_open_folder.set_sensitive(False)  # Deshabilitado por defecto (Modo ON)
         self.btn_open_folder.connect("clicked", self.on_btn_open_folder_clicked)
         
@@ -3212,18 +3215,55 @@ Comment=Auto ciclar wallpaper con citas
         return False
 
     def aplicar_estilos_css(self):
-        css = b"""
-        window { background-color: #0f172a; color: #f8fafc; }
-        checkbutton, radiobutton, label { color: #f8fafc; font-size: 13px; }
-        button { background-color: #1e293b; color: #ffffff; border: 1px solid #475569; border-radius: 6px; padding: 4px 8px; }
-        button:hover { background-color: #334155; }
-        combobox, entry { background-color: #1e293b; color: #ffffff; border: 1px solid #475569; }
-        expander label { font-size: 13px; font-weight: bold; color: #3b82f6; }
-        .arrow-btn { font-size: 16px; font-weight: bold; padding: 2px 10px; }
-        """
+        # Asegurar que el sistema use el tema oscuro nativo por defecto para los diálogos
+        settings = Gtk.Settings.get_default()
+        settings.set_property("gtk-application-prefer-dark-theme", True)
+
+        # Usamos un string normal (con soporte para tildes) y lo codificamos a utf-8 para bytes
+        css = """
+        /* El fondo azul personalizado se aplica UNICAMENTE a la ventana principal */
+        .main-window { 
+            background-color: #0f172a; 
+            color: #f8fafc; 
+        }
+        
+        /* Controles y textos generales */
+        checkbutton, radiobutton, label { 
+            color: #f8fafc; 
+            font-size: 13px; 
+        }
+        button { 
+            background-color: #1e293b; 
+            color: #ffffff; 
+            border: 1px solid #475569; 
+            border-radius: 6px; 
+            padding: 4px 8px; 
+        }
+        button:hover { 
+            background-color: #334155; 
+        }
+        combobox, entry { 
+            background-color: #1e293b; 
+            color: #ffffff; 
+            border: 1px solid #475569; 
+        }
+        expander label { 
+            font-size: 13px; 
+            font-weight: bold; 
+            color: #3b82f6; 
+        }
+        .arrow-btn { 
+            font-size: 16px; 
+            font-weight: bold; 
+            padding: 2px 10px; 
+        }
+        """.encode("utf-8")
+
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
-        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
 
 if __name__ == "__main__":
     try:
